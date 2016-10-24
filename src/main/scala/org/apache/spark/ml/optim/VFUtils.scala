@@ -1,5 +1,7 @@
 package org.apache.spark.ml.optim
 
+import scala.collection.mutable.HashMap
+
 import org.apache.spark.Partitioner
 
 import scala.collection.mutable.ArrayBuffer
@@ -10,27 +12,8 @@ import org.apache.spark.util.Utils
 
 import scala.reflect.ClassTag
 
-class CustomPartitionCoalescer(partitionNum: Int, mapFun: (Int) => Int)
-  extends PartitionCoalescer with Serializable{
-
-  override def coalesce(maxPartitions: Int, parent: RDD[_]): Array[PartitionGroup] = {
-    val parentRDDPartNum = parent.partitions.length
-    val partitionGroups = Array.tabulate[PartitionGroup](partitionNum){idx => new PartitionGroup()}
-    var i = 0
-    while (i < parentRDDPartNum) {
-      partitionGroups(mapFun(i)).partitions.append(parent.partitions(i))
-      i += 1
-    }
-    partitionGroups
-  }
-}
 
 object VFUtils {
-
-  def customCoalesceRDD[T: ClassTag](rdd: RDD[T], partitionNum: Int)(f: (Int) => Int): RDD[T] = {
-    val partitionCoalescer = new CustomPartitionCoalescer(partitionNum, f)
-    rdd.coalesce(partitionNum, false, Some(partitionCoalescer))
-  }
 
   def kvRDDToDV(rdd: RDD[(Int, Vector)], sizePerPart: Int, nParts: Int, nSize: Long)
     : DistributedVector = {
@@ -120,6 +103,74 @@ object VFUtils {
         iter.map((pid, _))
     }.collect()
   }
+
+
+  def blockMatrixHorzZipVec[T: ClassTag](
+      blockMatrixRDD: RDD[((Int, Int), SparseMatrix)],
+      dvec: DistributedVector,
+      gridPartitioner: GridPartitionerV2,
+      f: ((SparseMatrix, Vector) => T)
+  ) = {
+    import org.apache.spark.ml.optim.VFRDDFunctions._
+    require(gridPartitioner.cols == dvec.nParts)
+    blockMatrixRDD.mapJoinPartition(dvec.vecs)(
+      (pid: Int) => {
+        val colPartId = gridPartitioner.colPartId(pid)
+        val startIdx = colPartId * gridPartitioner.colsPerPart
+        var endIdx = startIdx + gridPartitioner.colsPerPart
+        if (endIdx > gridPartitioner.cols) endIdx = gridPartitioner.cols
+        (startIdx until endIdx).toArray
+      },
+      (pid: Int, mIter: Iterator[((Int, Int), SparseMatrix)], vIters: Array[(Int, Iterator[Vector])]) => {
+        val vMap = new HashMap[Int, Vector]
+        vIters.foreach {
+          case(colId: Int, iter: Iterator[Vector]) =>
+            val v = iter.next()
+            assert(!iter.hasNext)
+            vMap += (colId -> v)
+        }
+        mIter.map {
+          block =>
+            val vecPart = vMap(block._1._2)
+            (block._1._1, f(block._2, vecPart))
+        }
+      }
+    )
+  }
+  def blockMatrixVertZipVec[T: ClassTag](
+      blockMatrixRDD: RDD[((Int, Int), SparseMatrix)],
+      dvec: DistributedVector,
+      gridPartitioner: GridPartitionerV2,
+      f: (((SparseMatrix, Vector) => T))
+  ) = {
+    import org.apache.spark.ml.optim.VFRDDFunctions._
+    require(gridPartitioner.rows == dvec.nParts)
+    blockMatrixRDD.mapJoinPartition(dvec.vecs)(
+      (pid: Int) => {
+        val rowPartId = gridPartitioner.rowPartId(pid)
+        val startIdx = rowPartId * gridPartitioner.rowsPerPart
+        var endIdx = startIdx + gridPartitioner.rowsPerPart
+        if (endIdx > gridPartitioner.rows) endIdx = gridPartitioner.rows
+        (startIdx until endIdx).toArray
+      },
+      (pid: Int, mIter: Iterator[((Int, Int), SparseMatrix)], vIters: Array[(Int, Iterator[Vector])]) => {
+        val vMap = new HashMap[Int, Vector]
+        vIters.foreach {
+          case(rowId: Int, iter: Iterator[Vector]) =>
+            val v = iter.next()
+            assert(!iter.hasNext)
+            vMap += (rowId -> v)
+        }
+        mIter.map {
+          block =>
+            val horzPart = vMap(block._1._1)
+            (block._1._2, f(block._2, horzPart))
+        }
+      }
+    )
+  }
+
+
 }
 
 class OneDimGridPartitioner(val total: Long, val partSize: Int) extends Partitioner{
