@@ -41,8 +41,8 @@ class VLogisticRegressionSuite extends SparkFunSuite with MLlibTestSparkContext 
       .setWeightCol("weight").setRegParam(0.0).setStandardization(true)
     val singlemodel1 = singletrainer1.fit(dataset1)
 
-    println(s"with weight: vf coeffs: ${vfmodel1.coefficients.toLocal()}\nsingle coeffs: ${singlemodel1.coefficients}")
-    assert(vfmodel1.coefficients.toLocal() ~== singlemodel1.coefficients relTol 1E-5)
+    println(s"with weight: vf coeffs: ${vfmodel1.coefficients.toLocal}\nsingle coeffs: ${singlemodel1.coefficients}")
+    assert(vfmodel1.coefficients.toLocal ~== singlemodel1.coefficients relTol 1E-5)
 
   }
   test("test on data1, ignore weight, L2 reg = 0, without intercept") {
@@ -54,8 +54,8 @@ class VLogisticRegressionSuite extends SparkFunSuite with MLlibTestSparkContext 
       .setRegParam(0.0).setStandardization(true)
     val singlemodel2 = singletrainer2.fit(dataset1)
 
-    println(s"without weight: vf coeffs: ${vfmodel2.coefficients.toLocal()}\nsingle coeffs: ${singlemodel2.coefficients}")
-    assert(vfmodel2.coefficients.toLocal() ~== singlemodel2.coefficients relTol 1E-5)
+    println(s"without weight: vf coeffs: ${vfmodel2.coefficients.toLocal}\nsingle coeffs: ${singlemodel2.coefficients}")
+    assert(vfmodel2.coefficients.toLocal ~== singlemodel2.coefficients relTol 1E-5)
   }
 
   test("test on data1, use weight, L2 reg = 0.8, standardize = true, without intercept") {
@@ -68,8 +68,8 @@ class VLogisticRegressionSuite extends SparkFunSuite with MLlibTestSparkContext 
       .setWeightCol("weight").setRegParam(0.8).setStandardization(true)
     val singlemodel2 = singletrainer2.fit(dataset1)
 
-    println(s"without weight: vf coeffs: ${vfmodel2.coefficients.toLocal()}\nsingle coeffs: ${singlemodel2.coefficients}")
-    assert(vfmodel2.coefficients.toLocal() ~== singlemodel2.coefficients relTol 1E-5)
+    println(s"without weight: vf coeffs: ${vfmodel2.coefficients.toLocal}\nsingle coeffs: ${singlemodel2.coefficients}")
+    assert(vfmodel2.coefficients.toLocal ~== singlemodel2.coefficients relTol 1E-5)
   }
 
   test("test on data1, use weight, L2 reg = 0.8, standardize = false, without intercept") {
@@ -81,8 +81,8 @@ class VLogisticRegressionSuite extends SparkFunSuite with MLlibTestSparkContext 
       .setWeightCol("weight").setRegParam(0.8).setStandardization(false)
     val singlemodel2 = singletrainer2.fit(dataset1)
 
-    println(s"without weight: vf coeffs: ${vfmodel2.coefficients.toLocal()}\nsingle coeffs: ${singlemodel2.coefficients}")
-    assert(vfmodel2.coefficients.toLocal() ~== singlemodel2.coefficients relTol 1E-5)
+    println(s"without weight: vf coeffs: ${vfmodel2.coefficients.toLocal}\nsingle coeffs: ${singlemodel2.coefficients}")
+    assert(vfmodel2.coefficients.toLocal ~== singlemodel2.coefficients relTol 1E-5)
   }
 
   test("VF binary logistic regression with weighted samples") {
@@ -149,14 +149,14 @@ class VLogisticRegressionSuite extends SparkFunSuite with MLlibTestSparkContext 
     val model1a0 = trainer1a.fit(dataset)
     val model1a1 = trainer1a.fit(weightedDataset)
     val model1b = trainer1b.fit(weightedDataset)
-    println(s"model1a0: ${model1a0.coefficients.toLocal()}\nmodel1a1: ${model1a1.coefficients.toLocal()}\nmodel1b: ${model1b.coefficients.toLocal()}")
-    assert(model1a0.coefficients.toLocal() !~= model1a1.coefficients.toLocal() absTol 1E-3)
-    assert(model1a0.coefficients.toLocal() ~== model1b.coefficients.toLocal() absTol 1E-3)
+    println(s"model1a0: ${model1a0.coefficients.toLocal}\nmodel1a1: ${model1a1.coefficients.toLocal}\nmodel1b: ${model1b.coefficients.toLocal}")
+    assert(model1a0.coefficients.toLocal !~= model1a1.coefficients.toLocal absTol 1E-3)
+    assert(model1a0.coefficients.toLocal ~== model1b.coefficients.toLocal absTol 1E-3)
 
     val strainer1b = (new LogisticRegression).setFitIntercept(false)
       .setWeightCol("weight").setRegParam(0.0).setStandardization(true)
     val smodel1b = strainer1b.fit(weightedDataset)
     println(s"s-model1b: ${smodel1b.coefficients}")
-    assert(smodel1b.coefficients ~== model1b.coefficients.toLocal() absTol 1E-5)
+    assert(smodel1b.coefficients ~== model1b.coefficients.toLocal absTol 1E-5)
   }
 }

@@ -1,6 +1,6 @@
 package org.apache.spark.ml.optim
 
-import org.scalatest.FunSuite
+import org.apache.spark.SparkFunSuite
 import org.apache.spark.rdd.RDD
 import org.apache.spark.ml.linalg._
 import org.apache.spark.mllib.util.MLlibTestSparkContext
@@ -10,7 +10,7 @@ import scala.reflect.ClassTag
 /**
   * Created by ThinkPad on 2016/10/7.
   */
-class VFUtilsSuite extends FunSuite with MLlibTestSparkContext {
+class VFUtilsSuite extends SparkFunSuite with MLlibTestSparkContext {
 
   import VFUtilsSuite._
 

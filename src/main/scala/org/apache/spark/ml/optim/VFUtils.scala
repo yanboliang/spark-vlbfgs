@@ -184,18 +184,6 @@ class OneDimGridPartitioner(val total: Long, val partSize: Int) extends Partitio
   override def numPartitions: Int = partNum
 }
 
-class GridPartitioner(val rows: Int, val cols: Int) extends Partitioner{
-  override val numPartitions: Int = rows * cols
-  override def getPartition(key: Any): Int = {
-    key match {
-      case (i: Int, j: Int) =>
-        rows * j + i
-      case _ =>
-        throw new IllegalArgumentException(s"Unrecognized key: $key")
-    }
-  }
-}
-
 class GridPartitionerV2(
                          val rows: Int,
                          val cols: Int,

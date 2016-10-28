@@ -5,11 +5,11 @@ import java.util.Random
 import breeze.linalg.{norm => Bnorm, DenseVector => BDV}
 import breeze.optimize.{DiffFunction => BDF, LBFGS => BreezeLBFGS}
 
-import org.scalatest.FunSuite
+import org.apache.spark.SparkFunSuite
 import org.apache.spark.ml.linalg.DistributedVector
 import org.apache.spark.mllib.util.MLlibTestSparkContext
 
-class VectorFreeLBFGSSuite extends FunSuite with MLlibTestSparkContext {
+class VectorFreeLBFGSSuite extends SparkFunSuite with MLlibTestSparkContext {
 
   def rangeRandDouble(x: Double, y: Double, rand: Random): Double = x + (y - x) * rand.nextDouble()
 
