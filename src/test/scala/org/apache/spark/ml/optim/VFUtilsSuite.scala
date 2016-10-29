@@ -101,7 +101,7 @@ class VFUtilsSuite extends SparkFunSuite with MLlibTestSparkContext {
       assert(v._1 == v._2 && v._3 == v._4)
       (v._2, v._3)
     }.sortBy(v => v._1 + v._2 * 1000)
-    println(s"arr res: ${res.mkString(",")}")
+    // println(s"arr res: ${res.mkString(",")}")
     assert(res === Array.tabulate(rows * cols)(idx => {
       val rowIdx = idx % rows
       val colIdx = idx / rows
@@ -128,7 +128,7 @@ class VFUtilsSuite extends SparkFunSuite with MLlibTestSparkContext {
       assert(v._1 == v._3 && v._2 == v._4)
       (v._2, v._3)
     }.sortBy(v => v._1 + v._2 * 1000)
-    println(s"arr res: ${res.mkString(",")}")
+    // println(s"arr res: ${res.mkString(",")}")
     assert(res === Array.tabulate(rows * cols)(idx => {
       val rowIdx = idx % rows
       val colIdx = idx / rows
