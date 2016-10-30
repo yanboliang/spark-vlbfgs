@@ -1,11 +1,10 @@
 package org.apache.spark.ml.optim
 
-import org.scalatest.FunSuite
+import org.apache.spark.SparkFunSuite
 import org.apache.spark.ml.linalg.DistributedVectorPartitioner
-import org.apache.spark.mllib.linalg.distributed.GridPartitioner
 import org.apache.spark.mllib.util.MLlibTestSparkContext
 
-class VFRDDFunctionsSuite extends FunSuite with MLlibTestSparkContext {
+class VFRDDFunctionsSuite extends SparkFunSuite with MLlibTestSparkContext {
 
   import org.apache.spark.ml.optim.VFRDDFunctions._
 

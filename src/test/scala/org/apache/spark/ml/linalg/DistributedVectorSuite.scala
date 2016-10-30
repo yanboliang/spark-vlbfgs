@@ -2,12 +2,12 @@ package org.apache.spark.ml.linalg
 
 import breeze.linalg.{norm => Bnorm, DenseVector => BDV}
 
-import org.scalatest.FunSuite
+import org.apache.spark.SparkFunSuite
 
 import org.apache.spark.ml.optim.VFUtils
 import org.apache.spark.mllib.util.MLlibTestSparkContext
 
-class DistributedVectorSuite extends FunSuite with MLlibTestSparkContext {
+class DistributedVectorSuite extends SparkFunSuite with MLlibTestSparkContext {
 
   def testVecEq(v1: BDV[Double], v2: BDV[Double]): Boolean = {
     Bnorm(v1 - v2) < 1E-8
