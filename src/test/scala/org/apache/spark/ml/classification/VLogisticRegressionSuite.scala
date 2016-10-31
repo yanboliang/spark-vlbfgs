@@ -88,9 +88,9 @@ class VLogisticRegressionSuite extends SparkFunSuite with MLlibTestSparkContext 
   test("VF binary logistic regression with weighted samples") {
     val (dataset, weightedDataset) = {
       val nPoints = 20
-      val coefficients = Array(-0.57997, 0.912083, -0.371077, -0.819866)
-      val xMean = Array(0.1, -0.1, 0.0, 0.1)
-      val xVariance = Array(0.6856, 0.1899, 3.116, 0.581)
+      val coefficients = Array(-0.57997, 0.912083)
+      val xMean = Array(0.1, -0.1)
+      val xVariance = Array(0.6856, 0.1899)
       val testData =
         generateMultinomialLogisticInput(coefficients, xMean, xVariance, false, nPoints, 42)
 
