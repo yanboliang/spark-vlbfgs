@@ -144,7 +144,11 @@ object DistributedVectors {
 
   def zeros(sc: SparkContext, sizePerPart: Int, nParts: Int, nSize: Long): DistributedVector = {
     val lastPartSize = (nSize - sizePerPart * (nParts - 1)).toInt
-    val vecs = sc.parallelize(Array.tabulate(nParts)(x => (x, x)).toSeq, 1)
+    val vecs = sc.parallelize(Array.tabulate(nParts)(x => (x, x)).toSeq, nParts)
+      .mapPartitions{iter => {
+        Thread.sleep(1000) // add this sleep time will help spread the task into different node.
+        iter
+      }}
       .partitionBy(new DistributedVectorPartitioner(nParts))
       .map{ case(idx: Int, idx2: Int) =>
           if (idx < nParts - 1) { Vectors.zeros(sizePerPart) }
