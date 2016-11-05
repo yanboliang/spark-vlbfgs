@@ -31,7 +31,7 @@ import org.apache.spark.ml.param.shared._
 import org.apache.spark.ml.util.{DefaultParamsWritable, Identifiable}
 import org.apache.spark.mllib.linalg.distributed.GridPartitioner
 import org.apache.spark.mllib.linalg.VectorImplicits._
-import org.apache.spark.mllib.stat.MultivariateOnlineSummarizer
+import org.apache.spark.mllib.stat.OptimMultivariateOnlineSummarizer
 import org.apache.spark.{Partitioner, SparkException}
 import org.apache.spark.mllib.util.MLUtils
 import org.apache.spark.rdd.RDD
@@ -152,11 +152,12 @@ class VLogisticRegression @Since("2.1.0")(
               (partId, (partFeatures, weight))
           }
       }
-      val seqOp = (s: MultivariateOnlineSummarizer, partFeatures: (Vector, Double)) =>
+      val seqOp = (s: OptimMultivariateOnlineSummarizer, partFeatures: (Vector, Double)) =>
         s.add(partFeatures._1, partFeatures._2)
-      val comOp = (s1: MultivariateOnlineSummarizer, s2: MultivariateOnlineSummarizer) =>
+      val comOp = (s1: OptimMultivariateOnlineSummarizer, s2: OptimMultivariateOnlineSummarizer) =>
         s1.merge(s2)
-      featuresRDD.aggregateByKey(new MultivariateOnlineSummarizer,
+      featuresRDD.aggregateByKey(
+        new OptimMultivariateOnlineSummarizer(OptimMultivariateOnlineSummarizer.varianceMask),
         new DistributedVectorPartitioner(blockMatrixColNum)
       )(seqOp, comOp)
         .persist(storageLevel)
