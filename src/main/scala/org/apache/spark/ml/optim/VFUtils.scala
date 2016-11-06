@@ -38,7 +38,7 @@ object VFUtils {
       else splitArr(i) = arr.slice(partSize * i, arr.length)
       i += 1
     }
-    val rdd = sc.parallelize(splitArr.zipWithIndex.map(x => (x._2, Vectors.dense(x._1))))
+    val rdd = sc.parallelize(splitArr.zipWithIndex.map(x => (x._2, Vectors.dense(x._1))), partNum)
     kvRDDToDV(rdd, partSize, partNum, arr.length)
   }
 
