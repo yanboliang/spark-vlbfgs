@@ -96,6 +96,7 @@ class VFUtilsSuite extends SparkFunSuite with MLlibTestSparkContext {
       (sv(0, 0), sv(0, 1), v(0))
     }
     val res0 = VFUtils.blockMatrixHorzZipVec(blockMatrix, dvec, gridPartitioner, f)
+      .map(x => (x._1._1, x._2))
     val res = res0.map(v => (v._1, v._2._1.toInt, v._2._2.toInt, v._2._3.toInt))
       .collect().map{ v =>
       assert(v._1 == v._2 && v._3 == v._4)
@@ -123,6 +124,7 @@ class VFUtilsSuite extends SparkFunSuite with MLlibTestSparkContext {
       (sv(0, 0), sv(0, 1), v(0))
     }
     val res0 = VFUtils.blockMatrixVertZipVec(blockMatrix, dvec, gridPartitioner, f)
+      .map(x => (x._1._2, x._2))
     val res = res0.map(v => (v._1, v._2._1.toInt, v._2._2.toInt, v._2._3.toInt))
       .collect().map{ v =>
       assert(v._1 == v._3 && v._2 == v._4)

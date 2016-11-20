@@ -18,13 +18,11 @@
 package org.apache.spark.ml.classification
 
 import scala.collection.mutable.ArrayBuffer
-
 import breeze.linalg.{DenseVector => BDV}
-
 import org.apache.spark.annotation.{Experimental, Since}
 import org.apache.spark.internal.Logging
 import org.apache.spark.ml.feature.Instance
-import org.apache.spark.ml.linalg.{DistributedVector => DV, DistributedVectors => DVs, _}
+import org.apache.spark.ml.linalg.{SparseMatrix, Vector, DistributedVector => DV, DistributedVectors => DVs, _}
 import org.apache.spark.ml.optim.{DVDiffFunction, GridPartitionerV2, OneDimGridPartitioner, VFUtils, VectorFreeLBFGS}
 import org.apache.spark.ml.param.{IntParam, ParamMap, ParamValidators}
 import org.apache.spark.ml.param.shared._
@@ -174,29 +172,12 @@ class VLogisticRegression @Since("2.1.0")(
     val labelAndWeightRDD = instances.map(instance =>
       (instance.label, instance.weight)).persist(storageLevel)
 
-    /*
-    // 2. label statistics
-    val labelSummarizer = {
-      labelAndWeightRDD.aggregate(new MultiClassSummarizer)(
-        (s: MultiClassSummarizer, v: (Double, Double)) => s.add(v._1, v._2),
-        (s1: MultiClassSummarizer, s2: MultiClassSummarizer) => s1.merge(s2)
-      )
-    }
-    val histogram = labelSummarizer.histogram
-    val numInvalid = labelSummarizer.countInvalid
-    val numClasses = histogram.length
-    */
-
     // 3. statistic each partition size.
 
     val partitionSizeArray = VFUtils.computePartitionStartIndices(labelAndWeightRDD)
     val numInstances = partitionSizeArray.sum
     val blockMatrixRowNum = VFUtils.getSplitPartNum(localInstanceStackSize, numInstances)
-    // val localVertPartsNum = $(trainingDataMatrixVertPartNum)
-    // val vertBlocksPerVertPart = VFUtils.getSplitPartSize(localVertPartsNum ,blockMatrixRowNum)
 
-    // 4. pack multiple instances labels together
-    // (labelArr, weightArr)
     val labelAndWeight = VFUtils.zipRDDWithIndex(partitionSizeArray, labelAndWeightRDD).map {
       case (rowIdx: Long, (label: Double, weight: Double)) =>
         val blockRowIdx = (rowIdx / localInstanceStackSize).toInt
@@ -226,7 +207,7 @@ class VLogisticRegression @Since("2.1.0")(
     )
 
     // 5. pack features into blcok matrix
-    val featuresBlockMatrix = VFUtils.zipRDDWithIndex(partitionSizeArray, instances).flatMap {
+    val rawfeaturesBlockMatrix = VFUtils.zipRDDWithIndex(partitionSizeArray, instances).flatMap {
       case (rowIdx: Long, Instance(label, weight, features)) =>
         val blockRowIdx = (rowIdx / localInstanceStackSize).toInt
         val inBlockIdx = (rowIdx % localInstanceStackSize).toInt
@@ -236,36 +217,26 @@ class VLogisticRegression @Since("2.1.0")(
           case (partFeatures, partId) =>
             ((blockRowIdx, partId), (inBlockIdx, partFeatures))
         }
-    }.groupByKey(new Partitioner() {
-      override def getPartition(key: Any): Int = key match {
-        case (blockRowIdx: Int, blockColIdx: Int) => blockColIdx
-        case _ => throw new IllegalArgumentException(s"Unrecognized key: $key.")
-      }
-      override def numPartitions: Int = blockMatrixColNum
-    }).map {
+    }.groupByKey(gridPartitioner).map {
       case ((blockRowIdx: Int, partId: Int), iter: Iterable[(Int, SparseVector)]) =>
         val vecs = iter.toArray.sortWith(_._1 < _._1).map(_._2)
         val matrix = VFUtils.vertcatSparseVectorIntoCSRMatrix(vecs)
         ((blockRowIdx, partId), matrix)
-    }.zipPartitions(featuresStd.vecs)(
-      (matrixIter, featuresStdIter) => {
-        val partFeatureStdVector = featuresStdIter.next()
-        assert(!featuresStdIter.hasNext)
-        matrixIter.map {
-          case (matrixBlock: ((Int, Int), SparseMatrix)) =>
-            val partFeatureStdArr = partFeatureStdVector.asInstanceOf[DenseVector].values
-            val sm = matrixBlock._2
-            val arrBuf = new ArrayBuffer[(Int, Int, Double)]()
-            sm.foreachActive {
-              (i: Int, j: Int, value: Double) =>
-                if (partFeatureStdArr(j) != 0 && value != 0) {
-                  arrBuf.append((j, i, value / partFeatureStdArr(j)))
-                }
-            }
-            (matrixBlock._1, SparseMatrix.fromCOO(sm.numCols, sm.numRows, arrBuf).transpose)
-        }
-      }
-    ).partitionBy(gridPartitioner).persist(storageLevel)
+    }
+
+    val featuresBlockMatrix = VFUtils.blockMatrixHorzZipVec(
+        rawfeaturesBlockMatrix, featuresStd, gridPartitioner,
+        (sm: SparseMatrix, partFeatureStdVector: Vector) => {
+          val partFeatureStdArr = partFeatureStdVector.asInstanceOf[DenseVector].values
+          val arrBuf = new ArrayBuffer[(Int, Int, Double)]()
+          sm.foreachActive {
+            (i: Int, j: Int, value: Double) =>
+              if (partFeatureStdArr(j) != 0 && value != 0) {
+                arrBuf.append((j, i, value / partFeatureStdArr(j)))
+              }
+          }
+          SparseMatrix.fromCOO(sm.numCols, sm.numRows, arrBuf).transpose
+        }).persist(storageLevel)
 
     val costFun = new VFBinomialLogisticCostFun(
       numFeatures,
@@ -355,20 +326,7 @@ private class VFBinomialLogisticCostFun(
         partMarginArr(i) += (partCoeffs(j) * v)
       }
       new BDV(partMarginArr)
-    })/*
-    val multipliers = featuresBlockMatrixPartitionByBlockColIdx.zipPartitions(coeffs.vecs) {
-      (matrixIter: Iterator[((Int, Int), SparseMatrix)], coeffsIter: Iterator[Vector]) =>
-        val partCoeffs = coeffsIter.next()
-        assert(!coeffsIter.hasNext)
-        matrixIter.map {
-          case ((rowIdx: Int, colIdx: Int), matrix: SparseMatrix) =>
-            val partMarginArr = Array.fill[Double](matrix.numRows)(0.0)
-            matrix.foreachActive { case (i: Int, j: Int, v: Double) =>
-              partMarginArr(i) += (partCoeffs(j) * v)
-            }
-            (rowIdx, new BDV(partMarginArr))
-        }
-    }*/.reduceByKey(new DistributedVectorPartitioner(blockMatrixRowNum), _ + _)
+    }).map(x => (x._1._1, x._2)).reduceByKey(new DistributedVectorPartitioner(blockMatrixRowNum), _ + _)
       .zip(labelAndWeight).map {
       case ((rowIdx: Int, marginArr0: BDV[Double]), (labelArr: Array[Double], weightArr: Array[Double])) =>
         val marginArr = (marginArr0 * (-1.0)).toArray
@@ -401,20 +359,7 @@ private class VFBinomialLogisticCostFun(
           partGradArr(j) += (partMultipliers(i) * v)
         }
         new BDV[Double](partGradArr)
-    })/*
-    val gradDV = new DV(featuresBlockMatrixPartitionByBlockRowIdx.zipPartitions(multipliers) {
-      (matrixIter: Iterator[((Int, Int), SparseMatrix)], multiplierIter: Iterator[Array[Double]]) =>
-        val multiplierArr = multiplierIter.next()
-        assert(!multiplierIter.hasNext)
-        matrixIter.map {
-          case ((rowIdx: Int, colIdx: Int), matrix: SparseMatrix) =>
-            val partGradArr = Array.fill[Double](matrix.numCols)(0.0)
-            matrix.foreachActive { case (i: Int, j: Int, v: Double) =>
-              partGradArr(j) += (multiplierArr(i) * v)
-            }
-            (colIdx, new BDV[Double](partGradArr))
-        }
-    }*/.reduceByKey(new DistributedVectorPartitioner(blockMatrixColNum), _ + _)
+    }).map(x => (x._1._2, x._2)).reduceByKey(new DistributedVectorPartitioner(blockMatrixColNum), _ + _)
       .map(bv => Vectors.fromBreeze(bv._2 / weightSum))
     val gradDV = new DV(grad, featuresPartSize, blockMatrixColNum, featuresNum)
       .eagerPersist(storageLevel)
