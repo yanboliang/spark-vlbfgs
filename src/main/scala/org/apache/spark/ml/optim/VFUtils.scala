@@ -110,7 +110,7 @@ object VFUtils {
       dvec: DistributedVector,
       gridPartitioner: GridPartitionerV2,
       f: ((SparseMatrix, Vector) => T)
-  ) = {
+  ): RDD[((Int, Int), T)] = {
     import org.apache.spark.ml.optim.VFRDDFunctions._
     require(gridPartitioner.cols == dvec.nParts)
     blockMatrixRDD.mapJoinPartition(dvec.vecs)(
@@ -132,7 +132,7 @@ object VFUtils {
         mIter.map {
           block =>
             val vecPart = vMap(block._1._2)
-            (block._1._1, f(block._2, vecPart))
+            (block._1, f(block._2, vecPart))
         }
       }
     )
@@ -142,7 +142,7 @@ object VFUtils {
       dvec: DistributedVector,
       gridPartitioner: GridPartitionerV2,
       f: (((SparseMatrix, Vector) => T))
-  ) = {
+  ): RDD[((Int, Int), T)] = {
     import org.apache.spark.ml.optim.VFRDDFunctions._
     require(gridPartitioner.rows == dvec.nParts)
     blockMatrixRDD.mapJoinPartition(dvec.vecs)(
@@ -164,7 +164,7 @@ object VFUtils {
         mIter.map {
           block =>
             val horzPart = vMap(block._1._1)
-            (block._1._2, f(block._2, horzPart))
+            (block._1, f(block._2, horzPart))
         }
       }
     )
