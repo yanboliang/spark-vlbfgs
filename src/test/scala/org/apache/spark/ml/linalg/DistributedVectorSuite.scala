@@ -36,7 +36,7 @@ class DistributedVectorSuite extends SparkFunSuite with MLlibTestSparkContext {
     BV3 = new BDV(V3Array)
 
     val partSize = 3
-    val partNum = VUtils.getSplitPartNum(partSize, V1Array.length)
+    val partNum = VUtils.getNumBlocks(partSize, V1Array.length)
 
     DV1 = VUtils.splitArrIntoDV(sc, V1Array, partSize, partNum).eagerPersist()
     DV2 = VUtils.splitArrIntoDV(sc, V2Array, partSize, partNum).eagerPersist()

@@ -29,15 +29,15 @@ class VUtilsSuite extends SparkFunSuite with MLlibTestSparkContext {
     assert(a1 === a2)
   }
 
-  test ("getSplitPartNum") {
-    assert(VUtils.getSplitPartNum(2, 3) == 2)
-    assert(VUtils.getSplitPartNum(2, 4) == 2)
-    assert(VUtils.getSplitPartNum(2, 5) == 3)
-    assert(VUtils.getSplitPartNum(2, 6) == 3)
-    assert(VUtils.getSplitPartNum(3, 4) == 2)
-    assert(VUtils.getSplitPartNum(3, 5) == 2)
-    assert(VUtils.getSplitPartNum(3, 6) == 2)
-    assert(VUtils.getSplitPartNum(3, 7) == 3)
+  test ("getNumBlocks") {
+    assert(VUtils.getNumBlocks(2, 3) == 2)
+    assert(VUtils.getNumBlocks(2, 4) == 2)
+    assert(VUtils.getNumBlocks(2, 5) == 3)
+    assert(VUtils.getNumBlocks(2, 6) == 3)
+    assert(VUtils.getNumBlocks(3, 4) == 2)
+    assert(VUtils.getNumBlocks(3, 5) == 2)
+    assert(VUtils.getNumBlocks(3, 6) == 2)
+    assert(VUtils.getNumBlocks(3, 7) == 3)
   }
 
   test ("splitArrIntoDV") {

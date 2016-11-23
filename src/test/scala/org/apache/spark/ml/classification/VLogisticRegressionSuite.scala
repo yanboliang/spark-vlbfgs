@@ -28,7 +28,7 @@ class VLogisticRegressionSuite extends SparkFunSuite with MLlibTestSparkContext 
 
   test("test on data1, use weight, L2 reg = 0, without intercept") {
     val dataset1 = spark.createDataFrame(sc.parallelize(data1, 2))
-    val vftrainer1 = (new VLogisticRegression).setFeaturesPartSize(3).setInstanceStackSize(2)
+    val vftrainer1 = (new VLogisticRegression).setColsPerBlock(3).setRowsPerBlock(2)
       .setWeightCol("weight").setRegParam(0.0).setStandardization(true)
     val vfmodel1 = vftrainer1.fit(dataset1)
     val singletrainer1 = (new LogisticRegression).setFitIntercept(false)
@@ -41,7 +41,7 @@ class VLogisticRegressionSuite extends SparkFunSuite with MLlibTestSparkContext 
   }
   test("test on data1, ignore weight, L2 reg = 0, without intercept") {
     val dataset1 = spark.createDataFrame(sc.parallelize(data1, 2))
-    val vftrainer2 = (new VLogisticRegression).setFeaturesPartSize(2).setInstanceStackSize(3)
+    val vftrainer2 = (new VLogisticRegression).setColsPerBlock(2).setRowsPerBlock(3)
       .setRegParam(0.0).setStandardization(true)
     val vfmodel2 = vftrainer2.fit(dataset1)
     val singletrainer2 = (new LogisticRegression).setFitIntercept(false)
@@ -54,8 +54,8 @@ class VLogisticRegressionSuite extends SparkFunSuite with MLlibTestSparkContext 
 
   test("test on data1, use weight, L2 reg = 0.8, standardize = true, without intercept") {
     val dataset1 = spark.createDataFrame(sc.parallelize(data1, 2))
-    val vftrainer2 = (new VLogisticRegression).setFeaturesPartSize(1).setInstanceStackSize(1)
-        .setBlockMatrixColPartNum(3).setBlockMatrixRowPartNum(2)
+    val vftrainer2 = (new VLogisticRegression).setColsPerBlock(1).setRowsPerBlock(1)
+        .setColPartitions(3).setRowPartitions(2)
       .setWeightCol("weight").setRegParam(0.8).setStandardization(true)
     val vfmodel2 = vftrainer2.fit(dataset1)
     val singletrainer2 = (new LogisticRegression).setFitIntercept(false)
@@ -68,7 +68,7 @@ class VLogisticRegressionSuite extends SparkFunSuite with MLlibTestSparkContext 
 
   test("test on data1, use weight, L2 reg = 0.8, standardize = false, without intercept") {
     val dataset1 = spark.createDataFrame(sc.parallelize(data1, 2))
-    val vftrainer2 = (new VLogisticRegression).setFeaturesPartSize(4).setInstanceStackSize(5)
+    val vftrainer2 = (new VLogisticRegression).setColsPerBlock(4).setRowsPerBlock(5)
       .setWeightCol("weight").setRegParam(0.8).setStandardization(false)
     val vfmodel2 = vftrainer2.fit(dataset1)
     val singletrainer2 = (new LogisticRegression).setFitIntercept(false)
@@ -134,11 +134,11 @@ class VLogisticRegressionSuite extends SparkFunSuite with MLlibTestSparkContext 
     val bmodel1b = btrainer1b.fit(weightedDataset)
     println(s"bmodel1a0: ${bmodel1a0.coefficients}\nbmodel1a1: ${bmodel1a1.coefficients}\nbmodel1b: ${bmodel1b.coefficients}")
     */
-    val trainer1a = (new VLogisticRegression).setFeaturesPartSize(2).setInstanceStackSize(2)
-      .setBlockMatrixColPartNum(2).setBlockMatrixRowPartNum(3)
+    val trainer1a = (new VLogisticRegression).setColsPerBlock(2).setRowsPerBlock(2)
+      .setColPartitions(2).setRowPartitions(3)
       .setRegParam(0.0).setStandardization(true)
-    val trainer1b = (new VLogisticRegression).setFeaturesPartSize(2).setInstanceStackSize(2)
-      .setBlockMatrixColPartNum(3).setBlockMatrixRowPartNum(4)
+    val trainer1b = (new VLogisticRegression).setColsPerBlock(2).setRowsPerBlock(2)
+      .setColPartitions(3).setRowPartitions(4)
       .setWeightCol("weight").setRegParam(0.0).setStandardization(true)
     val model1a0 = trainer1a.fit(dataset)
     val model1a1 = trainer1a.fit(weightedDataset)

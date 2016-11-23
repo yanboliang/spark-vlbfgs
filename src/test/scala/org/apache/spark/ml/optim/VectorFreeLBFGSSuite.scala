@@ -66,7 +66,7 @@ class VectorFreeLBFGSSuite extends SparkFunSuite with MLlibTestSparkContext {
     val rand = new Random(100)
 
     val partSize = 3
-    val partNum = VUtils.getSplitPartNum(partSize, dimension)
+    val partNum = VUtils.getNumBlocks(partSize, dimension)
     println(s"----------test bm=$bm, dimension=$dimension, maxIter=$maxIter, partNum=${partNum}---------")
 
     val totalSize = dimension
