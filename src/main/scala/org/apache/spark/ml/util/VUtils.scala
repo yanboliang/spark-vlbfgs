@@ -15,18 +15,21 @@ import scala.reflect.ClassTag
 
 object VUtils {
 
-  def kvRDDToDV(rdd: RDD[(Int, Vector)], sizePerPart: Int, nParts: Int, nSize: Long)
-    : DistributedVector = {
+  def kvRDDToDV(
+      rdd: RDD[(Int, Vector)],
+      sizePerPart: Int,
+      nParts: Int,
+      nSize: Long): DistributedVector = {
     new DistributedVector(
       rdd.partitionBy(new DistributedVectorPartitioner(nParts)).map(_._2),
-      sizePerPart, nParts, nSize
-    )
+      sizePerPart, nParts, nSize)
   }
 
-  def getSplitPartNum(partSize: Int, totalSize: Long): Int = {
-    val num = (totalSize - 1) / partSize + 1
-    require(num < Int.MaxValue)
-    num.toInt
+  // Get number of blocks in row or column direction
+  def getNumBlocks(elementsPerBlock: Int, numElements: Long): Int = {
+    val numBlocks = (numElements - 1) / elementsPerBlock + 1
+    require(numBlocks < Int.MaxValue)
+    numBlocks.toInt
   }
 
   def splitArrIntoDV(sc: SparkContext, arr: Array[Double], partSize: Int, partNum: Int) = {
@@ -42,50 +45,54 @@ object VUtils {
     kvRDDToDV(rdd, partSize, partNum, arr.length)
   }
 
-  def splitSparseVector(sv: SparseVector, vecPartSize: Int): Array[SparseVector] = {
+  def splitSparseVector(sv: SparseVector, colsPerBlock: Int): Array[SparseVector] = {
     val totalSize = sv.size
-    val partNum = getSplitPartNum(vecPartSize, totalSize)
+    val colBlocks = getNumBlocks(colsPerBlock, totalSize)
 
-    val indicesArr = Array.fill(partNum)(new ArrayBuffer[Int])
-    val valuesArr = Array.fill(partNum)(new ArrayBuffer[Double])
+    val indicesArr = Array.fill(colBlocks)(new ArrayBuffer[Int])
+    val valuesArr = Array.fill(colBlocks)(new ArrayBuffer[Double])
 
-    sv.foreachActive((index: Int, value: Double) => {
-      indicesArr(index / vecPartSize) += (index % vecPartSize)
-      valuesArr(index / vecPartSize) += value
-    })
+    sv.foreachActive { case (index: Int, value: Double) =>
+      indicesArr(index / colsPerBlock) += (index % colsPerBlock)
+      valuesArr(index / colsPerBlock) += value
+    }
 
-    val result = new Array[SparseVector](partNum)
+    val result = new Array[SparseVector](colBlocks)
     var i = 0
-    while (i < partNum) {
-      val size = if (i == partNum - 1) {
-        ((totalSize - 1) % vecPartSize) + 1
-      } else vecPartSize
+    while (i < colBlocks) {
+      val size = if (i == colBlocks - 1) {
+        (totalSize - 1) % colsPerBlock + 1
+      } else {
+        colsPerBlock
+      }
       result(i) = new SparseVector(size, indicesArr(i).toArray, valuesArr(i).toArray)
       i = i + 1
     }
     result
   }
 
-  def computePartitionStartIndices(rdd: RDD[_]): Array[Long] = {
-    rdd.mapPartitionsWithIndex((index, iter) =>
-      List((index, Utils.getIteratorSize(iter))).toIterator)
-      .collect().sortWith(_._1 < _._1).map(_._2)
+  def computePartitionSize(rdd: RDD[_]): Array[Long] = {
+    rdd.mapPartitionsWithIndex { case (index, iter) =>
+      List((index, Utils.getIteratorSize(iter))).toIterator
+    }.collect().sortWith(_._1 < _._1).map(_._2)
   }
 
-  def zipRDDWithIndex[T: ClassTag](partitionSizeArray: Array[Long], rdd: RDD[T]): RDD[(Long, T)] = {
-    val startIndices = partitionSizeArray.scanLeft(0L)(_ + _)
+  def zipRDDWithIndex[T: ClassTag](
+      partitionSizes: Array[Long],
+      rdd: RDD[T]): RDD[(Long, T)] = {
+    val startIndices = partitionSizes.scanLeft(0L)(_ + _)
     val bcStartIndices = rdd.sparkContext.broadcast(startIndices)
 
-    rdd.mapPartitionsWithIndex((partIndex, iter) => {
+    rdd.mapPartitionsWithIndex { case (partIndex, iter) =>
       val startIndex = bcStartIndices.value(partIndex)
       iter.zipWithIndex.map { x =>
         (startIndex + x._2, x._1)
       }
-    })
+    }
   }
 
   def vertcatSparseVectorIntoCSRMatrix(vecs: Array[SparseVector]): SparseMatrix = {
-    var i = 0;
+    var i = 0
     val entries = new ArrayBuffer[(Int, Int, Double)]()
     while (i < vecs.length) {
       val rowIdx = i
