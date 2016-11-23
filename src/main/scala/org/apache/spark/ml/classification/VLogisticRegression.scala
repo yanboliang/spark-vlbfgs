@@ -1,43 +1,24 @@
-/*
- * Licensed to the Apache Software Foundation (ASF) under one or more
- * contributor license agreements.  See the NOTICE file distributed with
- * this work for additional information regarding copyright ownership.
- * The ASF licenses this file to You under the Apache License, Version 2.0
- * (the "License"); you may not use this file except in compliance with
- * the License.  You may obtain a copy of the License at
- *
- *    http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
-
 package org.apache.spark.ml.classification
 
 import scala.collection.mutable.ArrayBuffer
 import breeze.linalg.{DenseVector => BDV}
-import org.apache.spark.annotation.{Experimental, Since}
+import org.apache.spark.annotation.Since
 import org.apache.spark.internal.Logging
 import org.apache.spark.ml.feature.Instance
 import org.apache.spark.ml.linalg.{SparseMatrix, Vector, DistributedVector => DV, DistributedVectors => DVs, _}
-import org.apache.spark.ml.optim.{DVDiffFunction, GridPartitionerV2, OneDimGridPartitioner, VFUtils, VectorFreeLBFGS}
+import org.apache.spark.ml.optim.{DVDiffFunction, VectorFreeLBFGS}
 import org.apache.spark.ml.param.{IntParam, ParamMap, ParamValidators}
 import org.apache.spark.ml.param.shared._
-import org.apache.spark.ml.util.{DefaultParamsWritable, Identifiable}
-import org.apache.spark.mllib.linalg.distributed.GridPartitioner
+import org.apache.spark.ml.util._
 import org.apache.spark.mllib.linalg.VectorImplicits._
 import org.apache.spark.mllib.stat.OptimMultivariateOnlineSummarizer
-import org.apache.spark.{Partitioner, SparkException}
+import org.apache.spark.SparkException
 import org.apache.spark.mllib.util.MLUtils
 import org.apache.spark.rdd.RDD
 import org.apache.spark.sql.{Dataset, Row}
 import org.apache.spark.sql.functions._
 import org.apache.spark.sql.types.DoubleType
 import org.apache.spark.storage.StorageLevel
-import org.apache.spark.util.Utils
 
 /**
  * Params for vector-free logistic regression.
@@ -137,13 +118,13 @@ class VLogisticRegression @Since("2.1.0")(
     val numFeatures: Long = instances.first().features.size
     val localFeaturesPartSize = $(featuresPartSize)
     val localInstanceStackSize = $(instanceStackSize)
-    val blockMatrixColNum = VFUtils.getSplitPartNum(localFeaturesPartSize, numFeatures)
+    val blockMatrixColNum = VUtils.getSplitPartNum(localFeaturesPartSize, numFeatures)
 
     // 1. features statistics
     val featuresSummarizerRDD = {
       val featuresRDD = instances.flatMap {
         case Instance(label, weight, features) =>
-          val featuresList = VFUtils.splitSparseVector(
+          val featuresList = VUtils.splitSparseVector(
             features.toSparse, localFeaturesPartSize)
           featuresList.zipWithIndex.map {
             case (partFeatures, partId) =>
@@ -160,7 +141,7 @@ class VLogisticRegression @Since("2.1.0")(
       )(seqOp, comOp)
         .persist(storageLevel)
     }
-    val featuresStd = VFUtils.kvRDDToDV(
+    val featuresStd = VUtils.kvRDDToDV(
       featuresSummarizerRDD.mapValues(summarizer =>
         Vectors.dense(summarizer.variance.toArray.map(math.sqrt))),
       localFeaturesPartSize, blockMatrixColNum, numFeatures).eagerPersist(storageLevel)
@@ -174,11 +155,11 @@ class VLogisticRegression @Since("2.1.0")(
 
     // 3. statistic each partition size.
 
-    val partitionSizeArray = VFUtils.computePartitionStartIndices(labelAndWeightRDD)
+    val partitionSizeArray = VUtils.computePartitionStartIndices(labelAndWeightRDD)
     val numInstances = partitionSizeArray.sum
-    val blockMatrixRowNum = VFUtils.getSplitPartNum(localInstanceStackSize, numInstances)
+    val blockMatrixRowNum = VUtils.getSplitPartNum(localInstanceStackSize, numInstances)
 
-    val labelAndWeight = VFUtils.zipRDDWithIndex(partitionSizeArray, labelAndWeightRDD).map {
+    val labelAndWeight = VUtils.zipRDDWithIndex(partitionSizeArray, labelAndWeightRDD).map {
       case (rowIdx: Long, (label: Double, weight: Double)) =>
         val blockRowIdx = (rowIdx / localInstanceStackSize).toInt
         val inBlockIdx = (rowIdx % localInstanceStackSize).toInt
@@ -207,11 +188,11 @@ class VLogisticRegression @Since("2.1.0")(
     )
 
     // 5. pack features into blcok matrix
-    val rawfeaturesBlockMatrix = VFUtils.zipRDDWithIndex(partitionSizeArray, instances).flatMap {
+    val rawfeaturesBlockMatrix = VUtils.zipRDDWithIndex(partitionSizeArray, instances).flatMap {
       case (rowIdx: Long, Instance(label, weight, features)) =>
         val blockRowIdx = (rowIdx / localInstanceStackSize).toInt
         val inBlockIdx = (rowIdx % localInstanceStackSize).toInt
-        val featuresList = VFUtils.splitSparseVector(
+        val featuresList = VUtils.splitSparseVector(
           features.toSparse, localFeaturesPartSize)
         featuresList.zipWithIndex.map {
           case (partFeatures, partId) =>
@@ -220,11 +201,11 @@ class VLogisticRegression @Since("2.1.0")(
     }.groupByKey(gridPartitioner).map {
       case ((blockRowIdx: Int, partId: Int), iter: Iterable[(Int, SparseVector)]) =>
         val vecs = iter.toArray.sortWith(_._1 < _._1).map(_._2)
-        val matrix = VFUtils.vertcatSparseVectorIntoCSRMatrix(vecs)
+        val matrix = VUtils.vertcatSparseVectorIntoCSRMatrix(vecs)
         ((blockRowIdx, partId), matrix)
     }
 
-    val featuresBlockMatrix = VFUtils.blockMatrixHorzZipVec(
+    val featuresBlockMatrix = VUtils.blockMatrixHorzZipVec(
         rawfeaturesBlockMatrix, featuresStd, gridPartitioner,
         (sm: SparseMatrix, partFeatureStdVector: Vector) => {
           val partFeatureStdArr = partFeatureStdVector.asInstanceOf[DenseVector].values
@@ -320,7 +301,7 @@ private class VFBinomialLogisticCostFun(
     val regParamL2 = _regParamL2
 
     val lossAccu = featuresBlockMatrix.sparkContext.doubleAccumulator
-    val multipliers = VFUtils.blockMatrixHorzZipVec(featuresBlockMatrix, coeffs, gridPartitioner, (matrix, partCoeffs) => {
+    val multipliers = VUtils.blockMatrixHorzZipVec(featuresBlockMatrix, coeffs, gridPartitioner, (matrix, partCoeffs) => {
       val partMarginArr = Array.fill[Double](matrix.numRows)(0.0)
       matrix.foreachActive { case (i: Int, j: Int, v: Double) =>
         partMarginArr(i) += (partCoeffs(j) * v)
@@ -352,7 +333,7 @@ private class VFBinomialLogisticCostFun(
       .eagerPersist(storageLevel)
 
     val lossSum = lossAccu.value / weightSum
-    val grad = VFUtils.blockMatrixVertZipVec(featuresBlockMatrix, multipliersDV, gridPartitioner,
+    val grad = VUtils.blockMatrixVertZipVec(featuresBlockMatrix, multipliersDV, gridPartitioner,
       (matrix, partMultipliers) => {
         val partGradArr = Array.fill[Double](matrix.numCols)(0.0)
         matrix.foreachActive { case (i: Int, j: Int, v: Double) =>

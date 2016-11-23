@@ -2,7 +2,7 @@ package org.apache.spark.rdd
 
 import org.apache.spark.SparkFunSuite
 import org.apache.spark.ml.linalg.DistributedVectorPartitioner
-import org.apache.spark.ml.optim.GridPartitionerV2
+import org.apache.spark.ml.util.GridPartitionerV2
 import org.apache.spark.mllib.util.MLlibTestSparkContext
 
 class VRDDFunctionsSuite extends SparkFunSuite with MLlibTestSparkContext {

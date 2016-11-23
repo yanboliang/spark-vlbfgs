@@ -1,20 +1,14 @@
 package org.apache.spark.ml.classification
 
-import scala.collection.JavaConverters._
 import scala.language.existentials
 import scala.util.Random
-import scala.util.control.Breaks._
 
 import org.apache.spark.SparkFunSuite
 import org.apache.spark.ml.classification.LogisticRegressionSuite._
 import org.apache.spark.ml.feature.{Instance, LabeledPoint}
 import org.apache.spark.ml.linalg.{Vector, Vectors}
-import org.apache.spark.ml.param.ParamsSuite
-import org.apache.spark.ml.util.{DefaultReadWriteTest, MLTestingUtils}
 import org.apache.spark.ml.util.TestingUtils._
 import org.apache.spark.mllib.util.MLlibTestSparkContext
-import org.apache.spark.sql.{DataFrame, Dataset, Row}
-import org.apache.spark.sql.functions.lit
 
 /**
   * Created by ThinkPad on 2016/10/8.

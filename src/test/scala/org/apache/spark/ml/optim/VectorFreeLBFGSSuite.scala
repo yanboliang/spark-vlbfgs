@@ -8,7 +8,7 @@ import breeze.optimize.{DiffFunction => BDF, LBFGS => BreezeLBFGS}
 import org.apache.spark.ml.linalg.Vectors
 import org.apache.spark.SparkFunSuite
 import org.apache.spark.ml.linalg.DistributedVector
-import org.apache.spark.ml.util.{DefaultReadWriteTest, MLTestingUtils}
+import org.apache.spark.ml.util.VUtils
 import org.apache.spark.ml.util.TestingUtils._
 import org.apache.spark.mllib.util.MLlibTestSparkContext
 
@@ -30,7 +30,7 @@ class VectorFreeLBFGSSuite extends SparkFunSuite with MLlibTestSparkContext {
 
     val initBDV = new BDV(initData.clone())
 
-    val initDisV = VFUtils.splitArrIntoDV(sc, initData, 5, 2)
+    val initDisV = VUtils.splitArrIntoDV(sc, initData, 5, 2)
 
     val df = new BDF[BDV[Double]] {
       def calculate(x: BDV[Double]) = {
@@ -66,7 +66,7 @@ class VectorFreeLBFGSSuite extends SparkFunSuite with MLlibTestSparkContext {
     val rand = new Random(100)
 
     val partSize = 3
-    val partNum = VFUtils.getSplitPartNum(partSize, dimension)
+    val partNum = VUtils.getSplitPartNum(partSize, dimension)
     println(s"----------test bm=$bm, dimension=$dimension, maxIter=$maxIter, partNum=${partNum}---------")
 
     val totalSize = dimension
@@ -82,7 +82,7 @@ class VectorFreeLBFGSSuite extends SparkFunSuite with MLlibTestSparkContext {
 
     val initBDV = new BDV(initData.clone())
 
-    val initDisV = VFUtils.splitArrIntoDV(sc, initData, partSize, partNum).eagerPersist()
+    val initDisV = VUtils.splitArrIntoDV(sc, initData, partSize, partNum).eagerPersist()
 
     def calc(x: BDV[Double]): (Double, BDV[Double]) = {
 
@@ -106,7 +106,7 @@ class VectorFreeLBFGSSuite extends SparkFunSuite with MLlibTestSparkContext {
       def calculate(x: DistributedVector) = {
         val r = calc(new BDV(x.toLocal.toArray))
         val rr = r._2.toArray
-        (r._1, VFUtils.splitArrIntoDV(sc, rr, partSize, partNum).eagerPersist())
+        (r._1, VUtils.splitArrIntoDV(sc, rr, partSize, partNum).eagerPersist())
       }
     }
 

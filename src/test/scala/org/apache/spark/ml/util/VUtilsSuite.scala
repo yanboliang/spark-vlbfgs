@@ -1,4 +1,4 @@
-package org.apache.spark.ml.optim
+package org.apache.spark.ml.util
 
 import org.apache.spark.SparkFunSuite
 import org.apache.spark.rdd.RDD
@@ -10,9 +10,9 @@ import scala.reflect.ClassTag
 /**
   * Created by ThinkPad on 2016/10/7.
   */
-class VFUtilsSuite extends SparkFunSuite with MLlibTestSparkContext {
+class VUtilsSuite extends SparkFunSuite with MLlibTestSparkContext {
 
-  import VFUtilsSuite._
+  import VUtilsSuite._
 
   override def beforeAll(): Unit = {
     super.beforeAll()
@@ -30,18 +30,18 @@ class VFUtilsSuite extends SparkFunSuite with MLlibTestSparkContext {
   }
 
   test ("getSplitPartNum") {
-    assert(VFUtils.getSplitPartNum(2, 3) == 2)
-    assert(VFUtils.getSplitPartNum(2, 4) == 2)
-    assert(VFUtils.getSplitPartNum(2, 5) == 3)
-    assert(VFUtils.getSplitPartNum(2, 6) == 3)
-    assert(VFUtils.getSplitPartNum(3, 4) == 2)
-    assert(VFUtils.getSplitPartNum(3, 5) == 2)
-    assert(VFUtils.getSplitPartNum(3, 6) == 2)
-    assert(VFUtils.getSplitPartNum(3, 7) == 3)
+    assert(VUtils.getSplitPartNum(2, 3) == 2)
+    assert(VUtils.getSplitPartNum(2, 4) == 2)
+    assert(VUtils.getSplitPartNum(2, 5) == 3)
+    assert(VUtils.getSplitPartNum(2, 6) == 3)
+    assert(VUtils.getSplitPartNum(3, 4) == 2)
+    assert(VUtils.getSplitPartNum(3, 5) == 2)
+    assert(VUtils.getSplitPartNum(3, 6) == 2)
+    assert(VUtils.getSplitPartNum(3, 7) == 3)
   }
 
   test ("splitArrIntoDV") {
-    val arrs = VFUtils.splitArrIntoDV(sc, Array(1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0), 3, 3).vecs.collect()
+    val arrs = VUtils.splitArrIntoDV(sc, Array(1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0), 3, 3).vecs.collect()
     assert(arrEq(arrs(0).toArray, Array(1.0, 2.0, 3.0)))
     assert(arrEq(arrs(1).toArray, Array(4.0, 5.0, 6.0)))
     assert(arrEq(arrs(2).toArray, Array(7.0)))
@@ -49,7 +49,7 @@ class VFUtilsSuite extends SparkFunSuite with MLlibTestSparkContext {
 
   test ("splitSparseVector") {
     val sv1 = Vectors.dense(1.0, 2.0, 3.0, 4.0, 5.0, 6.0).toSparse
-    val splist = VFUtils.splitSparseVector(sv1, 2)
+    val splist = VUtils.splitSparseVector(sv1, 2)
     assert(
         splist(0) == Vectors.dense(1.0, 2.0) &&
         splist(1) == Vectors.dense(3.0, 4.0) &&
@@ -57,7 +57,7 @@ class VFUtilsSuite extends SparkFunSuite with MLlibTestSparkContext {
     )
 
     val sv2 = Vectors.dense(1.0, 2.0, 3.0, 4.0, 5.0).toSparse
-    val splist2 = VFUtils.splitSparseVector(sv2, 3)
+    val splist2 = VUtils.splitSparseVector(sv2, 3)
     assert(
         splist2(0) == Vectors.dense(1.0, 2.0, 3.0) &&
         splist2(1) == Vectors.dense(4.0, 5.0)
@@ -66,17 +66,17 @@ class VFUtilsSuite extends SparkFunSuite with MLlibTestSparkContext {
 
 
   test ("computePartitionStartIndices") {
-    val inds = VFUtils.computePartitionStartIndices(testZipIdxRdd).map(_.toInt)
+    val inds = VUtils.computePartitionStartIndices(testZipIdxRdd).map(_.toInt)
     assert(arrEq(inds, Array(2, 3, 5)))
   }
 
   test ("zipRDDWithIndex") {
-    val res = VFUtils.zipRDDWithIndex(Array(2L, 3L, 5L), testZipIdxRdd).collect().map(x => (x._1.toInt, x._2))
+    val res = VUtils.zipRDDWithIndex(Array(2L, 3L, 5L), testZipIdxRdd).collect().map(x => (x._1.toInt, x._2))
     assert(arrEq(res, Array((0, 1), (1, 2), (2, 1), (3, 2), (4, 3), (5, 1), (6, 2), (7, 3), (8, 4), (9, 5))))
   }
 
   test ("vertcatSparseVectorIntoCSRMatrix") {
-    assert(VFUtils.vertcatSparseVectorIntoCSRMatrix(Array(
+    assert(VUtils.vertcatSparseVectorIntoCSRMatrix(Array(
       Vectors.dense(1.0, 2.0, 3.0).toSparse,
       Vectors.dense(8.0, 7.0, 9.0).toSparse
     )).toDense == Matrices.dense(2, 3, Array(1.0, 8.0, 2.0, 7.0, 3.0, 9.0)))
@@ -91,11 +91,11 @@ class VFUtilsSuite extends SparkFunSuite with MLlibTestSparkContext {
     val gridPartitioner = GridPartitionerV2(rows, cols, rowsPerPart, colsPerPart)
     val blockMatrix = sc.parallelize(arrMatrix).partitionBy(gridPartitioner)
     val arrVec = Array.tabulate(cols)(idx => idx.toDouble)
-    val dvec = VFUtils.splitArrIntoDV(sc, arrVec, 1, cols)
+    val dvec = VUtils.splitArrIntoDV(sc, arrVec, 1, cols)
     val f = (sv: SparseMatrix, v: Vector) => {
       (sv(0, 0), sv(0, 1), v(0))
     }
-    val res0 = VFUtils.blockMatrixHorzZipVec(blockMatrix, dvec, gridPartitioner, f)
+    val res0 = VUtils.blockMatrixHorzZipVec(blockMatrix, dvec, gridPartitioner, f)
       .map(x => (x._1._1, x._2))
     val res = res0.map(v => (v._1, v._2._1.toInt, v._2._2.toInt, v._2._3.toInt))
       .collect().map{ v =>
@@ -119,11 +119,11 @@ class VFUtilsSuite extends SparkFunSuite with MLlibTestSparkContext {
     val gridPartitioner = GridPartitionerV2(rows, cols, rowsPerPart, colsPerPart)
     val blockMatrix = sc.parallelize(arrMatrix).partitionBy(gridPartitioner)
     val arrVec = Array.tabulate(rows)(idx => idx.toDouble)
-    val dvec = VFUtils.splitArrIntoDV(sc, arrVec, 1, rows)
+    val dvec = VUtils.splitArrIntoDV(sc, arrVec, 1, rows)
     val f = (sv: SparseMatrix, v: Vector) => {
       (sv(0, 0), sv(0, 1), v(0))
     }
-    val res0 = VFUtils.blockMatrixVertZipVec(blockMatrix, dvec, gridPartitioner, f)
+    val res0 = VUtils.blockMatrixVertZipVec(blockMatrix, dvec, gridPartitioner, f)
       .map(x => (x._1._2, x._2))
     val res = res0.map(v => (v._1, v._2._1.toInt, v._2._2.toInt, v._2._3.toInt))
       .collect().map{ v =>
@@ -165,7 +165,7 @@ class VFUtilsSuite extends SparkFunSuite with MLlibTestSparkContext {
     testBlockMatrixVertZipVecFunc(3, 15, 2, 6)
   }
 }
-object VFUtilsSuite {
+object VUtilsSuite {
   def arrEq[T: ClassTag](arr: Array[T], arr2: Array[T]): Boolean = {
     arr.length == arr2.length && arr.zip(arr2).forall(x => x._1 == x._2)
   }

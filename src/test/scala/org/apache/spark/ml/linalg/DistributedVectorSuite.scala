@@ -4,7 +4,7 @@ import breeze.linalg.{norm => Bnorm, DenseVector => BDV}
 
 import org.apache.spark.SparkFunSuite
 
-import org.apache.spark.ml.optim.VFUtils
+import org.apache.spark.ml.util.VUtils
 import org.apache.spark.mllib.util.MLlibTestSparkContext
 
 class DistributedVectorSuite extends SparkFunSuite with MLlibTestSparkContext {
@@ -36,11 +36,11 @@ class DistributedVectorSuite extends SparkFunSuite with MLlibTestSparkContext {
     BV3 = new BDV(V3Array)
 
     val partSize = 3
-    val partNum = VFUtils.getSplitPartNum(partSize, V1Array.length)
+    val partNum = VUtils.getSplitPartNum(partSize, V1Array.length)
 
-    DV1 = VFUtils.splitArrIntoDV(sc, V1Array, partSize, partNum).eagerPersist()
-    DV2 = VFUtils.splitArrIntoDV(sc, V2Array, partSize, partNum).eagerPersist()
-    DV3 = VFUtils.splitArrIntoDV(sc, V3Array, partSize, partNum).eagerPersist()
+    DV1 = VUtils.splitArrIntoDV(sc, V1Array, partSize, partNum).eagerPersist()
+    DV2 = VUtils.splitArrIntoDV(sc, V2Array, partSize, partNum).eagerPersist()
+    DV3 = VUtils.splitArrIntoDV(sc, V3Array, partSize, partNum).eagerPersist()
   }
 
   test("toLocal") {
@@ -84,11 +84,11 @@ class DistributedVectorSuite extends SparkFunSuite with MLlibTestSparkContext {
   }
 
   test("zeros") {
-    val res1 = VFUtils.zipRDDWithPartitionIDAndCollect(DistributedVectors.zeros(sc, 3, 2, 5).vecs)
+    val res1 = VUtils.zipRDDWithPartitionIDAndCollect(DistributedVectors.zeros(sc, 3, 2, 5).vecs)
     val res2 = Array((0, Vectors.dense(0.0, 0.0, 0.0)), (1, Vectors.dense(0.0, 0.0)))
     val res3 = Array((0, Vectors.dense(0.0, 0.0, 0.0)), (1, Vectors.dense(0.0, 0.1)))
-//    assert(VFUtilsSuite.arrEq(res1, res2))
-//    assert(!VFUtilsSuite.arrEq(res1, res3))
+//    assert(VUtilsSuite.arrEq(res1, res2))
+//    assert(!VUtilsSuite.arrEq(res1, res3))
   }
 
 }

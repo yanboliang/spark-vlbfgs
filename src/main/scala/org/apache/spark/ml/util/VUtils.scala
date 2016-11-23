@@ -1,4 +1,4 @@
-package org.apache.spark.ml.optim
+package org.apache.spark.ml.util
 
 import scala.collection.mutable.HashMap
 
@@ -7,13 +7,13 @@ import org.apache.spark.Partitioner
 import scala.collection.mutable.ArrayBuffer
 import org.apache.spark.SparkContext
 import org.apache.spark.ml.linalg._
-import org.apache.spark.rdd.{PartitionCoalescer, PartitionGroup, RDD}
+import org.apache.spark.rdd.RDD
 import org.apache.spark.util.Utils
 
 import scala.reflect.ClassTag
 
 
-object VFUtils {
+object VUtils {
 
   def kvRDDToDV(rdd: RDD[(Int, Vector)], sizePerPart: Int, nParts: Int, nSize: Long)
     : DistributedVector = {
