@@ -109,7 +109,7 @@ class DistributedVector(
   }
 }
 
-private[ml] class DistributedVectorPartitioner(val nParts: Int) extends Partitioner {
+private[spark] class DistributedVectorPartitioner(val nParts: Int) extends Partitioner {
   require(nParts > 0)
   override def getPartition(key: Any): Int = key.asInstanceOf[Int]
   override def numPartitions: Int = nParts

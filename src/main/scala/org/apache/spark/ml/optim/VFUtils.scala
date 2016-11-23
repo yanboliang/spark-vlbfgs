@@ -111,7 +111,7 @@ object VFUtils {
       gridPartitioner: GridPartitionerV2,
       f: ((SparseMatrix, Vector) => T)
   ): RDD[((Int, Int), T)] = {
-    import org.apache.spark.ml.optim.VFRDDFunctions._
+    import org.apache.spark.rdd.VRDDFunctions._
     require(gridPartitioner.cols == dvec.nParts)
     blockMatrixRDD.mapJoinPartition(dvec.vecs)(
       (pid: Int) => {
@@ -143,7 +143,7 @@ object VFUtils {
       gridPartitioner: GridPartitionerV2,
       f: (((SparseMatrix, Vector) => T))
   ): RDD[((Int, Int), T)] = {
-    import org.apache.spark.ml.optim.VFRDDFunctions._
+    import org.apache.spark.rdd.VRDDFunctions._
     require(gridPartitioner.rows == dvec.nParts)
     blockMatrixRDD.mapJoinPartition(dvec.vecs)(
       (pid: Int) => {
