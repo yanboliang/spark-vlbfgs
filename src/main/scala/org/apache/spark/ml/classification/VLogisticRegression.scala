@@ -140,12 +140,12 @@ class VLogisticRegression(override val uid: String)
 
     // 3. statistic each partition size.
 
-    val partitionSize: Array[Long] = VUtils.computePartitionStartIndices(labelAndWeightRDD)
-    val numInstances = partitionSize.sum
+    val partitionSizes: Array[Long] = VUtils.computePartitionSize(labelAndWeightRDD)
+    val numInstances = partitionSizes.sum
     val rowBlocks = VUtils.getNumBlocks(localRowsPerBlock, numInstances)
 
     val labelAndWeight: RDD[(Array[Double], Array[Double])] =
-      VUtils.zipRDDWithIndex(partitionSize, labelAndWeightRDD)
+      VUtils.zipRDDWithIndex(partitionSizes, labelAndWeightRDD)
         .map { case (rowIdx: Long, (label: Double, weight: Double)) =>
           val rowBlockIdx = (rowIdx / localRowsPerBlock).toInt
           val inBlockIdx = (rowIdx % localRowsPerBlock).toInt
@@ -176,7 +176,7 @@ class VLogisticRegression(override val uid: String)
 
     // 5. pack features into blcok matrix
     val rawFeatures: RDD[((Int, Int), SparseMatrix)] =
-      VUtils.zipRDDWithIndex(partitionSize, instances)
+      VUtils.zipRDDWithIndex(partitionSizes, instances)
         .flatMap { case (rowIdx: Long, Instance(label, weight, features)) =>
           val rowBlockIdx = (rowIdx / localRowsPerBlock).toInt
           val inBlockIdx = (rowIdx % localRowsPerBlock).toInt
@@ -255,24 +255,38 @@ class VLogisticRegression(override val uid: String)
 }
 
 private class VFBinomialLogisticCostFun(
-    numFeatures: Long,
-    colsPerBlock: Int,
-    numInstances: Long,
-    rowsPerBlock: Int,
-    features: RDD[((Int, Int), SparseMatrix)],
-    gridPartitioner: GridPartitionerV2,
-    labelAndWeight: RDD[(Array[Double], Array[Double])],
-    weightSum: Double,
-    rowBlocks: Int,
-    colBlocks: Int,
-    standardization: Boolean,
-    featuresStd: DV,
-    regParamL2: Double) extends DVDiffFunction {
+    _numFeatures: Long,
+    _colsPerBlock: Int,
+    _numInstances: Long,
+    _rowsPerBlock: Int,
+    _features: RDD[((Int, Int), SparseMatrix)],
+    _gridPartitioner: GridPartitionerV2,
+    _labelAndWeight: RDD[(Array[Double], Array[Double])],
+    _weightSum: Double,
+    _rowBlocks: Int,
+    _colBlocks: Int,
+    _standardization: Boolean,
+    _featuresStd: DV,
+    _regParamL2: Double) extends DVDiffFunction {
 
   import VLogisticRegression._
 
   // Calculates both the value and the gradient at a point
   override def calculate(coeffs: DV): (Double, DV) = {
+
+    val numFeatures: Long = _numFeatures
+    val colsPerBlock: Int = _colsPerBlock
+    val numInstances: Long = _numInstances
+    val rowsPerBlock: Int = _rowsPerBlock
+    val features: RDD[((Int, Int), SparseMatrix)] = _features
+    val gridPartitioner: GridPartitionerV2 = _gridPartitioner
+    val labelAndWeight: RDD[(Array[Double], Array[Double])] = _labelAndWeight
+    val weightSum: Double = _weightSum
+    val rowBlocks: Int = _rowBlocks
+    val colBlocks: Int = _colBlocks
+    val standardization: Boolean = _standardization
+    val featuresStd: DV = _featuresStd
+    val regParamL2: Double = _regParamL2
 
     val lossAccu: DoubleAccumulator = features.sparkContext.doubleAccumulator
     val multipliers: RDD[Vector] = VUtils.blockMatrixHorzZipVec(features, coeffs, gridPartitioner,

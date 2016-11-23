@@ -71,8 +71,7 @@ object VUtils {
     result
   }
 
-  // computePartitionSize
-  def computePartitionStartIndices(rdd: RDD[_]): Array[Long] = {
+  def computePartitionSize(rdd: RDD[_]): Array[Long] = {
     rdd.mapPartitionsWithIndex { case (index, iter) =>
       List((index, Utils.getIteratorSize(iter))).toIterator
     }.collect().sortWith(_._1 < _._1).map(_._2)

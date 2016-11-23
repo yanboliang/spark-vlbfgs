@@ -66,7 +66,7 @@ class VUtilsSuite extends SparkFunSuite with MLlibTestSparkContext {
 
 
   test ("computePartitionStartIndices") {
-    val inds = VUtils.computePartitionStartIndices(testZipIdxRdd).map(_.toInt)
+    val inds = VUtils.computePartitionSize(testZipIdxRdd).map(_.toInt)
     assert(arrEq(inds, Array(2, 3, 5)))
   }
 
