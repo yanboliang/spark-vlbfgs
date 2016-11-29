@@ -198,7 +198,7 @@ class OneDimGridPartitioner(val total: Long, val partSize: Int) extends Partitio
   override def numPartitions: Int = partNum
 }
 
-private[ml] class GridPartitionerV2(
+private[spark] class GridPartitionerV2(
     val rows: Int,
     val cols: Int,
     val rowsPerPart: Int,
@@ -263,7 +263,7 @@ private[ml] class GridPartitionerV2(
   }
 }
 
-private[ml] object GridPartitionerV2 {
+private[spark] object GridPartitionerV2 {
 
   /** Creates a new [[GridPartitionerV2]] instance. */
   def apply(rows: Int, cols: Int, rowsPerPart: Int, colsPerPart: Int): GridPartitionerV2 = {
