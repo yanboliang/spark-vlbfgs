@@ -10,9 +10,6 @@ import org.apache.spark.ml.linalg.{Vector, Vectors}
 import org.apache.spark.ml.util.TestingUtils._
 import org.apache.spark.mllib.util.MLlibTestSparkContext
 
-/**
-  * Created by ThinkPad on 2016/10/8.
-  */
 class VLogisticRegressionSuite extends SparkFunSuite with MLlibTestSparkContext {
   override def beforeAll(): Unit = {
     super.beforeAll()
@@ -39,6 +36,7 @@ class VLogisticRegressionSuite extends SparkFunSuite with MLlibTestSparkContext 
     assert(vfmodel1.coefficients.toLocal ~== singlemodel1.coefficients relTol 1E-5)
 
   }
+
   test("test on data1, ignore weight, L2 reg = 0, without intercept") {
     val dataset1 = spark.createDataFrame(sc.parallelize(data1, 2))
     val vftrainer2 = (new VLogisticRegression).setColsPerBlock(2).setRowsPerBlock(3)

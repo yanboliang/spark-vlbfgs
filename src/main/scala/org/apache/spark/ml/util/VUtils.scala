@@ -13,7 +13,7 @@ import org.apache.spark.util.Utils
 import scala.reflect.ClassTag
 
 
-object VUtils {
+private[ml] object VUtils {
 
   def kvRDDToDV(
       rdd: RDD[(Int, Vector)],
@@ -32,8 +32,12 @@ object VUtils {
     numBlocks.toInt
   }
 
-  def splitArrIntoDV(sc: SparkContext, arr: Array[Double], partSize: Int, partNum: Int) = {
-    var i = 0;
+  def splitArrIntoDV(
+      sc: SparkContext,
+      arr: Array[Double],
+      partSize: Int,
+      partNum: Int): DistributedVector = {
+    var i = 0
     val splitArr = new Array[Array[Double]](partNum)
     val lastSplitSize = arr.length - partSize * (partNum - 1)
     while (i < partNum) {
@@ -144,6 +148,7 @@ object VUtils {
       }
     )
   }
+
   def blockMatrixVertZipVec[T: ClassTag](
       blockMatrixRDD: RDD[((Int, Int), SparseMatrix)],
       dvec: DistributedVector,
@@ -176,26 +181,28 @@ object VUtils {
       }
     )
   }
-
-
 }
 
-class OneDimGridPartitioner(val total: Long, val partSize: Int) extends Partitioner{
+class OneDimGridPartitioner(val total: Long, val partSize: Int) extends Partitioner {
+
   require(total > partSize && partSize > 0)
+
   val partNum = {
     val _partNum = (total - 1) / partSize + 1
     require(_partNum > 0 && _partNum <= Int.MaxValue)
     _partNum.toInt
   }
+
   override def getPartition(key: Any): Int = (key.asInstanceOf[Long] / partSize).toInt
+
   override def numPartitions: Int = partNum
 }
 
-class GridPartitionerV2(
-                         val rows: Int,
-                         val cols: Int,
-                         val rowsPerPart: Int,
-                         val colsPerPart: Int) extends Partitioner {
+private[ml] class GridPartitionerV2(
+    val rows: Int,
+    val cols: Int,
+    val rowsPerPart: Int,
+    val colsPerPart: Int) extends Partitioner {
 
   require(rows > 0)
   require(cols > 0)
@@ -255,7 +262,8 @@ class GridPartitionerV2(
       colsPerPart: java.lang.Integer)
   }
 }
-object GridPartitionerV2 {
+
+private[ml] object GridPartitionerV2 {
 
   /** Creates a new [[GridPartitionerV2]] instance. */
   def apply(rows: Int, cols: Int, rowsPerPart: Int, colsPerPart: Int): GridPartitionerV2 = {
