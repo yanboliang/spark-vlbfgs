@@ -125,12 +125,12 @@ private[ml] object VUtils {
     import org.apache.spark.rdd.VRDDFunctions._
     require(gridPartitioner.cols == dvec.nParts)
     blockMatrixRDD.mapJoinPartition(dvec.vecs)(
-      (pid: Int) => {
+      (pid: Int) => {  // pid is the partition ID of blockMatrix RDD
         val colPartId = gridPartitioner.colPartId(pid)
         val startIdx = colPartId * gridPartitioner.colsPerPart
         var endIdx = startIdx + gridPartitioner.colsPerPart
         if (endIdx > gridPartitioner.cols) endIdx = gridPartitioner.cols
-        (startIdx until endIdx).toArray
+        (startIdx until endIdx).toArray // The corresponding partition ID of dvec
       },
       (pid: Int, mIter: Iterator[((Int, Int), SparseMatrix)], vIters: Array[(Int, Iterator[Vector])]) => {
         val vMap = new HashMap[Int, Vector]
@@ -140,10 +140,9 @@ private[ml] object VUtils {
             assert(!iter.hasNext)
             vMap += (colId -> v)
         }
-        mIter.map {
-          block =>
-            val vecPart = vMap(block._1._2)
-            (block._1, f(block._2, vecPart))
+        mIter.map { case ((rowBlockIdx: Int, colBlockIdx: Int), sm: SparseMatrix) =>
+          val vecPart = vMap(colBlockIdx)
+          ((rowBlockIdx, colBlockIdx), f(sm, vecPart))
         }
       }
     )
@@ -173,10 +172,9 @@ private[ml] object VUtils {
             assert(!iter.hasNext)
             vMap += (rowId -> v)
         }
-        mIter.map {
-          block =>
-            val horzPart = vMap(block._1._1)
-            (block._1, f(block._2, horzPart))
+        mIter.map { case ((rowBlockIdx: Int, colBlockIdx: Int), sm: SparseMatrix) =>
+          val horzPart = vMap(rowBlockIdx)
+          ((rowBlockIdx, colBlockIdx), f(sm, horzPart))
         }
       }
     )

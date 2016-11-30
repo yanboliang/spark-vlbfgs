@@ -2,7 +2,7 @@ package org.apache.spark.ml.classification
 
 import scala.collection.mutable.ArrayBuffer
 import breeze.linalg.{DenseVector => BDV}
-import org.apache.spark.annotation.Since
+
 import org.apache.spark.internal.Logging
 import org.apache.spark.ml.feature.Instance
 import org.apache.spark.ml.linalg.{DistributedVector => DV, DistributedVectors => DVs, _}
@@ -63,7 +63,6 @@ class VLogisticRegression(override val uid: String)
     "Number of partitions in the row direction.", ParamValidators.gt(0))
   setDefault(rowPartitions -> 10)
 
-  @Since("2.1.0")
   def setRowPartitions(value: Int): this.type = set(rowPartitions, value)
 
   // colPartitions
@@ -187,10 +186,10 @@ class VLogisticRegression(override val uid: String)
           }
         }
         .groupByKey(gridPartitioner)
-        .map { case ((blockRowIdx: Int, colBlockIdx: Int), iter: Iterable[(Int, SparseVector)]) =>
+        .map { case ((rowBlockIdx: Int, colBlockIdx: Int), iter: Iterable[(Int, SparseVector)]) =>
           val vecs = iter.toArray.sortWith(_._1 < _._1).map(_._2)
           val matrix = VUtils.vertcatSparseVectorIntoCSRMatrix(vecs)
-          ((blockRowIdx, colBlockIdx), matrix)
+          ((rowBlockIdx, colBlockIdx), matrix)
         }
 
     val features: RDD[((Int, Int), SparseMatrix)] = VUtils.blockMatrixHorzZipVec(
@@ -206,7 +205,7 @@ class VLogisticRegression(override val uid: String)
           SparseMatrix.fromCOO(sm.numCols, sm.numRows, arrBuf).transpose
         }).persist(storageLevel)
 
-    val costFun = new VFBinomialLogisticCostFun(
+    val costFun = new VBinomialLogisticCostFun(
       numFeatures,
       localColsPerBlock,
       numInstances,
@@ -254,7 +253,7 @@ class VLogisticRegression(override val uid: String)
   override def copy(extra: ParamMap): VLogisticRegression = defaultCopy(extra)
 }
 
-private class VFBinomialLogisticCostFun(
+private class VBinomialLogisticCostFun(
     _numFeatures: Long,
     _colsPerBlock: Int,
     _numInstances: Long,
@@ -290,16 +289,18 @@ private class VFBinomialLogisticCostFun(
 
     val lossAccu: DoubleAccumulator = features.sparkContext.doubleAccumulator
     val multipliers: RDD[Vector] = VUtils.blockMatrixHorzZipVec(features, coeffs, gridPartitioner,
-      (matrix, partCoeffs) => {
+      (matrix: SparseMatrix, partCoeffs: Vector) => {
         val partMarginArr = Array.fill[Double](matrix.numRows)(0.0)
         matrix.foreachActive { case (i: Int, j: Int, v: Double) =>
           partMarginArr(i) += (partCoeffs(j) * v)
         }
-        new BDV(partMarginArr)
+        new BDV[Double](partMarginArr)
       }
-    ).map(x => (x._1._1, x._2)).reduceByKey(new DistributedVectorPartitioner(rowBlocks), _ + _)
+    ).map { case ((rowBlockIdx: Int, colBlockIdx: Int), partMargins: BDV[Double]) =>
+      (rowBlockIdx, partMargins)
+    }.reduceByKey(new DistributedVectorPartitioner(rowBlocks), _ + _)
       .zip(labelAndWeight)
-      .map { case ((rowIdx: Int, marginArr0: BDV[Double]), (labelArr: Array[Double], weightArr: Array[Double])) =>
+      .map { case ((rowBlockIdx: Int, marginArr0: BDV[Double]), (labelArr: Array[Double], weightArr: Array[Double])) =>
         val marginArr = (marginArr0 * (-1.0)).toArray
         var lossSum = 0.0
         val multiplierArr = Array.fill(marginArr.length)(0.0)
@@ -324,53 +325,57 @@ private class VFBinomialLogisticCostFun(
       .eagerPersist(storageLevel)
 
     val lossSum = lossAccu.value / weightSum
-    val grad = VUtils.blockMatrixVertZipVec(features, multipliersDV, gridPartitioner,
-      (matrix, partMultipliers) => {
+
+    val grad: RDD[Vector] = VUtils.blockMatrixVertZipVec(features, multipliersDV, gridPartitioner,
+      (matrix: SparseMatrix, partMultipliers: Vector) => {
         val partGradArr = Array.fill[Double](matrix.numCols)(0.0)
         matrix.foreachActive { case (i: Int, j: Int, v: Double) =>
           partGradArr(j) += (partMultipliers(i) * v)
         }
         new BDV[Double](partGradArr)
       }
-    ).map(x => (x._1._2, x._2)).reduceByKey(new DistributedVectorPartitioner(colBlocks), _ + _)
-      .map(bv => Vectors.fromBreeze(bv._2 / weightSum))
+    ).map { case ((rowBlockIdx: Int, colBlockIdx: Int), partGrads: BDV[Double]) =>
+      (colBlockIdx, partGrads)
+    }.reduceByKey(new DistributedVectorPartitioner(colBlocks), _ + _)
+      .map { case (colBlockIdx: Int, partGrads: BDV[Double]) =>
+        Vectors.fromBreeze(partGrads / weightSum)
+      }
+
     val gradDV: DV = new DV(grad, colsPerBlock, colBlocks, numFeatures).eagerPersist(storageLevel)
 
-    // compute regulation for grad & objective value
+    // compute regularization for grad & objective value
     val lossRegAccu = gradDV.vecs.sparkContext.doubleAccumulator
-    val gradDVWithReg = if (standardization) {
-      gradDV.zipPartitions(coeffs) {
-        (partGrad: Vector, partCoeffs: Vector) =>
-          var lossReg = 0.0
-          val partGradArr = partGrad.toArray
-          val res = Array.fill[Double](partGrad.size)(0.0)
-          partCoeffs.foreachActive {
-            case (i: Int, value: Double) =>
-              res(i) = partGradArr(i) + regParamL2 * value
-              lossReg += (value * value)
-          }
-          lossRegAccu.add(lossReg)
-          Vectors.dense(res)
+    val gradDVWithReg: DV = if (standardization) {
+      gradDV.zipPartitions(coeffs) { case (partGrads: Vector, partCoeffs: Vector) =>
+        var lossReg = 0.0
+        val partGradArr = partGrads.toArray
+        val res = Array.fill[Double](partGrads.size)(0.0)
+        partCoeffs.foreachActive { case (i: Int, value: Double) =>
+          res(i) = partGradArr(i) + regParamL2 * value
+          lossReg += (value * value)
+        }
+        lossRegAccu.add(lossReg)
+        Vectors.dense(res)
       }
     } else {
       gradDV.zipPartitions(coeffs, featuresStd) {
-        (partGrad: Vector, partCoeffs: Vector, partFeaturesStd: Vector) =>
+        (partGrads: Vector, partCoeffs: Vector, partFeaturesStds: Vector) =>
           var lossReg = 0.0
-          val partGradArr = partGrad.toArray
-          val partFeaturesStdArr = partFeaturesStd.toArray
+          val partGradArr = partGrads.toArray
+          val partFeaturesStdArr = partFeaturesStds.toArray
           val res = Array.fill[Double](partGradArr.length)(0.0)
-          partCoeffs.foreachActive {
-            case (i: Int, value: Double) =>
-              if (partFeaturesStdArr(i) != 0.0) {
-                val temp = value / (partFeaturesStdArr(i) * partFeaturesStdArr(i))
-                res(i) = partGradArr(i) + regParamL2 * temp
-                lossReg += (value * temp)
-              }
+          partCoeffs.foreachActive { case (i: Int, value: Double) =>
+            if (partFeaturesStdArr(i) != 0.0) {
+              val temp = value / (partFeaturesStdArr(i) * partFeaturesStdArr(i))
+              res(i) = partGradArr(i) + regParamL2 * temp
+              lossReg += (value * temp)
+            }
           }
           lossRegAccu.add(lossReg)
           Vectors.dense(res)
       }
     }
+
     gradDVWithReg.eagerPersist(storageLevel)
     val regSum = lossRegAccu.value
     (lossSum + 0.5 * regParamL2 * regSum, gradDVWithReg)
@@ -397,13 +402,11 @@ class VLogisticRegressionModel private[spark](
     1.0 / (1.0 + math.exp(-m))
   }
 
-  @Since("1.6.0")
   override val numFeatures: Int = {
     require(coefficients.nSize < Int.MaxValue)
     coefficients.nSize.toInt
   }
 
-  @Since("1.3.0")
   override val numClasses: Int = 2
 
   override protected def predict(features: Vector): Double = {
