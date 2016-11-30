@@ -35,16 +35,16 @@ class VLogisticRegressionSuite extends SparkFunSuite with MLlibTestSparkContext 
       .setStandardization(true)
     val vmodel = vtrainer.fit(df1)
 
-    val trainer1 = new LogisticRegression()
+    val trainer = new LogisticRegression()
       .setFitIntercept(false)
       .setWeightCol("weight")
       .setRegParam(0.0)
       .setStandardization(true)
-    val model1 = trainer1.fit(df1)
+    val model = trainer.fit(df1)
 
     println(s"VLogisticRegression coefficients: ${vmodel.coefficients.toLocal}\n" +
-      s"LogisticRegression coefficients: ${model1.coefficients}")
-    assert(vmodel.coefficients.toLocal ~== model1.coefficients relTol 1E-5)
+      s"LogisticRegression coefficients: ${model.coefficients}")
+    assert(vmodel.coefficients.toLocal ~== model.coefficients relTol 1E-5)
   }
 
   test("test on data1, w/o weight, L2 reg = 0, w/o intercept") {
