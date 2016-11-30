@@ -16,7 +16,7 @@ class RealDataSuite extends SparkFunSuite with MLlibTestSparkContext {
     dataset1 = spark.read.format("libsvm").load("data/a9a")
   }
 
-  test("a9a") {
+  ignore("a9a") {
     val trainer = new LogisticRegression()
       .setFitIntercept(false)
       .setRegParam(0.5)
