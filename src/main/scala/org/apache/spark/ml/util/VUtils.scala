@@ -1,3 +1,20 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *    http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package org.apache.spark.ml.util
 
 import scala.collection.mutable.HashMap
@@ -276,6 +293,45 @@ private[spark] object GridPartitionerV2 {
     val colsPerPart = math.round(math.max(scale * cols, 1.0)).toInt
     new GridPartitionerV2(rows, cols, rowsPerPart, colsPerPart)
   }
+}
+
+private[spark] class VectorSummarizer extends Serializable {
+
+  private var sum: Array[Double] = null
+
+  def add(v: Vector): VectorSummarizer = {
+    if (sum == null) {
+      sum = v.toDense.toArray
+    } else {
+      val localSum = sum
+      v.foreachActive { (index: Int, value: Double) =>
+        localSum(index) += value
+      }
+    }
+    this
+  }
+
+  def merge(s: VectorSummarizer): VectorSummarizer = {
+    val sum2 = s.sum
+    if (sum == null) {
+      sum = sum2
+    } else {
+      require(sum.length == sum2.length)
+      var i = 0
+      while (i < sum.length) {
+        sum(i) += sum2(i)
+        i += 1
+      }
+    }
+    this
+  }
+
+  def toDenseVector: DenseVector = {
+    Vectors.dense(sum).toDense
+  }
+
+  def toArray: Array[Double] = sum
+
 }
 
 
