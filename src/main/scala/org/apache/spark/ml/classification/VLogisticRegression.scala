@@ -1,3 +1,20 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *    http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package org.apache.spark.ml.classification
 
 import scala.collection.mutable.ArrayBuffer
@@ -288,37 +305,42 @@ private class VBinomialLogisticCostFun(
     val regParamL2: Double = _regParamL2
 
     val lossAccu: DoubleAccumulator = features.sparkContext.doubleAccumulator
-    val multipliers: RDD[Vector] = VUtils.blockMatrixHorzZipVec(features, coeffs, gridPartitioner,
+    val multipliers: RDD[Vector] = VUtils.blockMatrixHorzZipVec(
+      features, coeffs, gridPartitioner,
       (matrix: SparseMatrix, partCoeffs: Vector) => {
         val partMarginArr = Array.fill[Double](matrix.numRows)(0.0)
         matrix.foreachActive { case (i: Int, j: Int, v: Double) =>
           partMarginArr(i) += (partCoeffs(j) * v)
         }
-        new BDV[Double](partMarginArr)
+        Vectors.dense(partMarginArr).compressed
       }
-    ).map { case ((rowBlockIdx: Int, colBlockIdx: Int), partMargins: BDV[Double]) =>
+    ).map { case ((rowBlockIdx: Int, colBlockIdx: Int), partMargins: Vector) =>
       (rowBlockIdx, partMargins)
-    }.reduceByKey(new DistributedVectorPartitioner(rowBlocks), _ + _)
-      .zip(labelAndWeight)
-      .map { case ((rowBlockIdx: Int, marginArr0: BDV[Double]), (labelArr: Array[Double], weightArr: Array[Double])) =>
-        val marginArr = (marginArr0 * (-1.0)).toArray
-        var lossSum = 0.0
-        val multiplierArr = Array.fill(marginArr.length)(0.0)
-        var i = 0
-        while (i < marginArr.length) {
-          val label = labelArr(i)
-          val margin = marginArr(i)
-          val weight = weightArr(i)
-          if (label > 0) {
-            lossSum += weight * MLUtils.log1pExp(margin)
-          } else {
-            lossSum += weight * (MLUtils.log1pExp(margin) - margin)
+    }.aggregateByKey(new VectorSummarizer, new DistributedVectorPartitioner(rowBlocks))(
+      (s, v) => s.add(v),
+      (s1, s2) => s1.merge(s2)
+    ).zip(labelAndWeight)
+      .map {
+        case ((rowBlockIdx: Int, marginSummarizer: VectorSummarizer),
+        (labelArr: Array[Double], weightArr: Array[Double])) =>
+          val marginArr = marginSummarizer.toArray
+          var lossSum = 0.0
+          val multiplierArr = Array.fill(marginArr.length)(0.0)
+          var i = 0
+          while (i < marginArr.length) {
+            val label = labelArr(i)
+            val margin = -1.0 * marginArr(i)
+            val weight = weightArr(i)
+            if (label > 0) {
+              lossSum += weight * MLUtils.log1pExp(margin)
+            } else {
+              lossSum += weight * (MLUtils.log1pExp(margin) - margin)
+            }
+            multiplierArr(i) = weight * (1.0 / (1.0 + math.exp(margin)) - label)
+            i = i + 1
           }
-          multiplierArr(i) = weight * (1.0 / (1.0 + math.exp(margin)) - label)
-          i = i + 1
-        }
-        lossAccu.add(lossSum)
-        Vectors.dense(multiplierArr)
+          lossAccu.add(lossSum)
+          Vectors.dense(multiplierArr)
       }
 
     val multipliersDV: DV = new DV(multipliers, rowsPerBlock, rowBlocks, numInstances)
@@ -332,13 +354,22 @@ private class VBinomialLogisticCostFun(
         matrix.foreachActive { case (i: Int, j: Int, v: Double) =>
           partGradArr(j) += (partMultipliers(i) * v)
         }
-        new BDV[Double](partGradArr)
+        Vectors.dense(partGradArr).compressed
       }
-    ).map { case ((rowBlockIdx: Int, colBlockIdx: Int), partGrads: BDV[Double]) =>
+    ).map { case ((rowBlockIdx: Int, colBlockIdx: Int), partGrads: Vector) =>
       (colBlockIdx, partGrads)
-    }.reduceByKey(new DistributedVectorPartitioner(colBlocks), _ + _)
-      .map { case (colBlockIdx: Int, partGrads: BDV[Double]) =>
-        Vectors.fromBreeze(partGrads / weightSum)
+    }.aggregateByKey(new VectorSummarizer, new DistributedVectorPartitioner(colBlocks))(
+      (s, v) => s.add(v),
+      (s1, s2) => s1.merge(s2)
+    ).map {
+      case (colBlockIdx: Int, partGradsSummarizer: VectorSummarizer) =>
+        val partGradsArr = partGradsSummarizer.toArray
+        var i = 0
+        while (i < partGradsArr.length) {
+          partGradsArr(i) /= weightSum
+          i += 1
+        }
+        Vectors.dense(partGradsArr)
       }
 
     val gradDV: DV = new DV(grad, colsPerBlock, colBlocks, numFeatures).eagerPersist(storageLevel)
