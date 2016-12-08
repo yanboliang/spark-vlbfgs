@@ -111,7 +111,7 @@ class VUtilsSuite extends SparkFunSuite with MLlibTestSparkContext {
     val blockMatrix = sc.parallelize(arrMatrix).partitionBy(gridPartitioner)
     val arrVec = Array.tabulate(cols)(idx => idx.toDouble)
     val dvec = splitArrIntoDV(sc, arrVec, 1, cols)
-    val f = (sv: SparseMatrix, v: Vector) => {
+    val f = (blockCoords: (Int, Int), sv: SparseMatrix, v: Vector) => {
       (sv(0, 0), sv(0, 1), v(0))
     }
     val res0 = blockMatrixHorzZipVec(blockMatrix, dvec, gridPartitioner, f)
@@ -142,7 +142,7 @@ class VUtilsSuite extends SparkFunSuite with MLlibTestSparkContext {
     val blockMatrix = sc.parallelize(arrMatrix).partitionBy(gridPartitioner)
     val arrVec = Array.tabulate(rows)(idx => idx.toDouble)
     val dvec = VUtils.splitArrIntoDV(sc, arrVec, 1, rows)
-    val f = (sv: SparseMatrix, v: Vector) => {
+    val f = (blockCoords: (Int, Int), sv: SparseMatrix, v: Vector) => {
       (sv(0, 0), sv(0, 1), v(0))
     }
     val res0 = VUtils.blockMatrixVertZipVec(blockMatrix, dvec, gridPartitioner, f)

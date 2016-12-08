@@ -113,6 +113,7 @@ class VectorFreeLBFGS(
       } catch {
         case x: Exception =>
           state.convergenceFlag = SearchFailedFlag
+          x.printStackTrace(System.err)
           state
       }
     }
@@ -131,7 +132,7 @@ class VectorFreeLBFGS(
           logInfo("Vector-Free LBFGS gradient converged.")
           true
         case SearchFailedFlag =>
-          logInfo("Vector-Free LBFGS search failed.")
+          logError("Vector-Free LBFGS search failed.")
           true
       }
       if (isFinished) history.dispose
