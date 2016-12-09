@@ -29,22 +29,16 @@ import scala.reflect.ClassTag
 class VUtilsSuite extends SparkFunSuite with MLlibTestSparkContext {
 
   import VUtils._
-  import VUtilsSuite._
 
   @transient var testZipIdxRdd: RDD[Int] = _
 
   override def beforeAll(): Unit = {
     super.beforeAll()
-    testZipIdxRdd = sc.parallelize(Seq((0, 1), (0, 2), (1, 1), (1, 2), (1, 3), (2, 1), (2, 2), (2, 3), (2, 4), (2,5)))
-      .partitionBy(new DistributedVectorPartitioner(3)).map(_._2)
-  }
-
-  test("triple equal") {
-    val a1 = Array(1.0, 2.0)
-    val a2 = Array(1.0, 2.0)
-
-    assert(!(a1 == a2))
-    assert(a1 === a2)
+    testZipIdxRdd = sc.parallelize(Seq(
+      (0, 1), (0, 2), (1, 1), (1, 2),
+      (1, 3), (2, 1), (2, 2), (2, 3),
+      (2, 4), (2,5)
+    )).partitionBy(new DistributedVectorPartitioner(3)).map(_._2)
   }
 
   test("getNumBlocks") {
@@ -59,10 +53,13 @@ class VUtilsSuite extends SparkFunSuite with MLlibTestSparkContext {
   }
 
   test("splitArrIntoDV") {
-    val arrs = splitArrIntoDV(sc, Array(1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0), 3, 3).vecs.collect()
-    assert(arrEq(arrs(0).toArray, Array(1.0, 2.0, 3.0)))
-    assert(arrEq(arrs(1).toArray, Array(4.0, 5.0, 6.0)))
-    assert(arrEq(arrs(2).toArray, Array(7.0)))
+    val arrs = splitArrIntoDV(
+      sc, Array(1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0), 3, 3)
+      .vecs.collect()
+
+    assert(arrs(0).toArray === Array(1.0, 2.0, 3.0))
+    assert(arrs(1).toArray === Array(4.0, 5.0, 6.0))
+    assert(arrs(2).toArray === Array(7.0))
   }
 
   test("splitSparseVector") {
@@ -84,12 +81,19 @@ class VUtilsSuite extends SparkFunSuite with MLlibTestSparkContext {
 
   test("computePartitionSize") {
     val sizes = computePartitionSize(testZipIdxRdd).map(_.toInt)
-    assert(arrEq(sizes, Array(2, 3, 5)))
+    assert(sizes === Array(2, 3, 5))
   }
 
   test("zipRDDWithIndex") {
-    val res = zipRDDWithIndex(Array(2L, 3L, 5L), testZipIdxRdd).collect().map(x => (x._1.toInt, x._2))
-    assert(arrEq(res, Array((0, 1), (1, 2), (2, 1), (3, 2), (4, 3), (5, 1), (6, 2), (7, 3), (8, 4), (9, 5))))
+    val res = zipRDDWithIndex(Array(2L, 3L, 5L), testZipIdxRdd)
+      .collect()
+      .map(x => (x._1.toInt, x._2))
+    assert(res ===
+      Array(
+        (0, 1), (1, 2), (2, 1), (3, 2),
+        (4, 3), (5, 1), (6, 2), (7, 3),
+        (8, 4), (9, 5)
+      ))
   }
 
   test("vertcatSparseVectorIntoCSRMatrix") {
@@ -122,7 +126,7 @@ class VUtilsSuite extends SparkFunSuite with MLlibTestSparkContext {
       assert(v._1 == v._2 && v._3 == v._4)
       (v._2, v._3)
     }.sortBy(v => v._1 + v._2 * 1000)
-    // println(s"arr res: ${res.mkString(",")}")
+
     assert(res === Array.tabulate(rows * cols) { idx =>
       val rowIdx = idx % rows
       val colIdx = idx / rows
@@ -153,7 +157,7 @@ class VUtilsSuite extends SparkFunSuite with MLlibTestSparkContext {
       assert(v._1 == v._3 && v._2 == v._4)
       (v._2, v._3)
     }.sortBy(v => v._1 + v._2 * 1000)
-    // println(s"arr res: ${res.mkString(",")}")
+
     assert(res === Array.tabulate(rows * cols) { idx =>
       val rowIdx = idx % rows
       val colIdx = idx / rows
@@ -202,12 +206,5 @@ class VUtilsSuite extends SparkFunSuite with MLlibTestSparkContext {
     ).toDenseVector
 
     assert(result ~== Vectors.dense(4.0, 6.0, 5.0) relTol 1e-3)
-  }
-}
-
-object VUtilsSuite {
-
-  def arrEq[T: ClassTag](arr: Array[T], arr2: Array[T]): Boolean = {
-    arr.length == arr2.length && arr.zip(arr2).forall(x => x._1 == x._2)
   }
 }

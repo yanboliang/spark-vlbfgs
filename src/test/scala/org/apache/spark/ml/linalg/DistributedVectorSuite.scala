@@ -22,17 +22,10 @@ import breeze.linalg.{norm => Bnorm, DenseVector => BDV}
 import org.apache.spark.SparkFunSuite
 
 import org.apache.spark.ml.util.VUtils
+import org.apache.spark.ml.util.TestingUtils._
 import org.apache.spark.mllib.util.MLlibTestSparkContext
 
 class DistributedVectorSuite extends SparkFunSuite with MLlibTestSparkContext {
-
-  def testVecEq(v1: BDV[Double], v2: BDV[Double]): Boolean = {
-    Bnorm(v1 - v2) < 1E-8
-  }
-
-  def testDoubleEq(v1: Double, v2: Double): Boolean = {
-    math.abs(v1 - v2) < 1E-8
-  }
 
   var BV1: BDV[Double] = null
   var BV2: BDV[Double] = null
@@ -62,50 +55,55 @@ class DistributedVectorSuite extends SparkFunSuite with MLlibTestSparkContext {
 
   test("toLocal") {
     val localDV1 = DV1.toLocal
-    assert(testVecEq(localDV1.asBreeze.toDenseVector, BV1))
+    assert(localDV1 ~== Vectors.fromBreeze(BV1) relTol 1e-8)
   }
 
   test("add") {
     val local1 = DV1.add(2.0).eagerPersist().toLocal
     val local2 = DV1.add(DV2).eagerPersist().toLocal
-    assert(testVecEq(local1.asBreeze.toDenseVector, BV1 + 2.0))
-    assert(testVecEq(local2.asBreeze.toDenseVector, BV1 + BV2))
+    assert(local1 ~== Vectors.fromBreeze(BV1 + 2.0) relTol 1e-8)
+    assert(local2 ~== Vectors.fromBreeze(BV1 + BV2) relTol 1e-8)
   }
 
   test("scale") {
     val local1 = DV1.scale(2.0).eagerPersist().toLocal
-    assert(testVecEq(local1.asBreeze.toDenseVector, BV1 * 2.0))
+    assert(local1 ~== Vectors.fromBreeze(BV1 * 2.0) relTol 1e-8)
   }
 
   test("addScalVec") {
     val res = DV1.addScalVec(3.0, DV2).eagerPersist().toLocal
-    assert(testVecEq(res.asBreeze.toDenseVector, BV1 + (BV2 * 3.0)))
+    assert(res ~== Vectors.fromBreeze(BV1 + (BV2 * 3.0)) relTol 1e-8)
   }
 
   test("dot") {
     val dotVal = DV1.dot(DV2)
     val bDotVal = BV1.dot(BV2)
-    assert(testDoubleEq(dotVal, bDotVal))
+    assert(dotVal ~== bDotVal relTol 1e-8)
   }
 
   test("norm") {
     val normVal = DV1.norm
     val bnormVal = Bnorm(BV1)
-    assert(testDoubleEq(normVal, bnormVal))
+    assert(normVal ~== bnormVal relTol 1e-8)
   }
 
   test("combine") {
-    val combineVecLocal = DistributedVectors.combine((10.0, DV1), (100.0, DV2), (18.0, DV3)).eagerPersist().toLocal
+    val combineVecLocal = DistributedVectors.combine(
+      (10.0, DV1), (100.0, DV2), (18.0, DV3)
+    ).eagerPersist().toLocal
     val bCombineVec = (BV1 * 10.0) + (BV2 * 100.0) + (BV3 * 18.0)
-    assert(testVecEq(combineVecLocal.asBreeze.toDenseVector, bCombineVec))
+    assert(combineVecLocal ~== Vectors.fromBreeze(bCombineVec) relTol 1e-8)
   }
 
   test("zeros") {
-    val res1 = VUtils.zipRDDWithPartitionIDAndCollect(DistributedVectors.zeros(sc, 3, 2, 5).vecs)
-    val res2 = Array((0, Vectors.dense(0.0, 0.0, 0.0)), (1, Vectors.dense(0.0, 0.0)))
-    val res3 = Array((0, Vectors.dense(0.0, 0.0, 0.0)), (1, Vectors.dense(0.0, 0.1)))
-//    assert(VUtilsSuite.arrEq(res1, res2))
-//    assert(!VUtilsSuite.arrEq(res1, res3))
+    var res1 = VUtils.zipRDDWithPartitionIDAndCollect(
+      DistributedVectors.zeros(sc, 3, 2, 5).vecs)
+    var res2 = Array((0, Vectors.dense(0.0, 0.0, 0.0)), (1, Vectors.dense(0.0, 0.0)))
+    assert(res1 === res2)
+    res1 = VUtils.zipRDDWithPartitionIDAndCollect(
+      DistributedVectors.zeros(sc, 3, 2, 7, 1.5).vecs)
+    res2 = Array((0, Vectors.dense(0.0, 0.0, 0.0)), (1, Vectors.dense(0.0, 0.0, 0.0, 1.5)))
+    assert(res1 === res2)
   }
 
 }

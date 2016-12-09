@@ -444,7 +444,7 @@ private[ml] class VBinomialLogisticCostFun(
           i += 1
         }
         Vectors.dense(partGradsArr)
-      }
+    }
 
     val gradDV: DV = new DV(grad, colsPerBlock, colBlocks,
       if (fitIntercept) numFeatures + 1 else numFeatures
