@@ -15,25 +15,25 @@
  * limitations under the License.
  */
 
-package org.apache.spark.ml.classification
+package org.apache.spark.ml.example
 
-import org.apache.spark.SparkFunSuite
-import org.apache.spark.ml.util.TestingUtils._
-import org.apache.spark.mllib.util.MLlibTestSparkContext
-import org.apache.spark.sql.Dataset
+import org.apache.spark.ml.classification.{LogisticRegression, VLogisticRegression}
+import org.apache.spark.sql.{Dataset, SparkSession}
 
-class RealDataSuite extends SparkFunSuite with MLlibTestSparkContext {
+
+object VLORRealDataExample {
 
   // https://www.csie.ntu.edu.tw/~cjlin/libsvmtools/datasets/binary.html#a9a
-  @transient var dataset1: Dataset[_] = _
+  def main(args: Array[String]) = {
+    val spark = SparkSession
+      .builder()
+      .appName("VLogistic Regression real data example")
+      .getOrCreate()
 
-  override def beforeAll(): Unit = {
-    super.beforeAll()
+    val sc = spark.sparkContext
 
-    dataset1 = spark.read.format("libsvm").load("data/a9a")
-  }
+    var dataset1: Dataset[_] = spark.read.format("libsvm").load("data/a9a")
 
-  ignore("a9a") {
     val trainer = new LogisticRegression()
       .setFitIntercept(false)
       .setRegParam(0.5)
@@ -47,7 +47,9 @@ class RealDataSuite extends SparkFunSuite with MLlibTestSparkContext {
       .setRegParam(0.5)
     val vmodel = vtrainer.fit(dataset1)
 
-    assert(vmodel.coefficients.toLocal ~== model.coefficients relTol 1E-3)
-  }
+    println(s"VLogistic regression coefficients: ${vmodel.coefficients.toLocal}")
+    println(s"Logistic regression coefficients: ${model.coefficients}")
 
+    sc.stop()
+  }
 }

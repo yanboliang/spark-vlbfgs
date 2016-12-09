@@ -3,6 +3,6 @@ data/
 .idea/
 *.iml
 git.*
-src/main/scala/org/apache/spark/ml/private
+src/main/scala/org/apache/spark/ml/privatecode
 
 

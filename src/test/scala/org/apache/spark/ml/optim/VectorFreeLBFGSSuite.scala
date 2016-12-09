@@ -31,7 +31,9 @@ import org.apache.spark.mllib.util.MLlibTestSparkContext
 
 class VectorFreeLBFGSSuite extends SparkFunSuite with MLlibTestSparkContext {
 
-  def rangeRandDouble(x: Double, y: Double, rand: Random): Double = x + (y - x) * rand.nextDouble()
+  def rangeRandDouble(x: Double, y: Double, rand: Random): Double ={
+    x + (y - x) * rand.nextDouble()
+  }
 
   override def beforeAll(): Unit = {
     super.beforeAll()
@@ -91,9 +93,6 @@ class VectorFreeLBFGSSuite extends SparkFunSuite with MLlibTestSparkContext {
     val lbfgs = new BreezeLBFGS[BDV[Double]](maxIter, bm)
     val vf_lbfgs = new VectorFreeLBFGS(maxIter, bm)
 
-    // FIX: dimension == 4, hasNext != , when iter == 94
-    // FIX: dimension == 10, hasNext != , when iter == 99
-
     val initData: Array[Double] = Array.fill(dimension)(0.0)
       .map(x => rangeRandDouble(-10D, 10D, rand))
 
@@ -149,10 +148,8 @@ class VectorFreeLBFGSSuite extends SparkFunSuite with MLlibTestSparkContext {
     for (bm <- 4 to 10) {
       for (dimension <- 4 to 6 by 2) {
         testRosenbrock(bm, 10, dimension)
-        // println(s"bm=$bm, dimension=$dimension test passed.")
       }
     }
-    // println("test done.(useVector-free true)")
   }
 
 }

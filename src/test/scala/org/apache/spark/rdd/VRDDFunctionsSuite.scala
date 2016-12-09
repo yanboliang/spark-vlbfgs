@@ -54,7 +54,7 @@ class VRDDFunctionsSuite extends SparkFunSuite with MLlibTestSparkContext {
         Iterator((p1, list.map(tuple => (tuple._1, tuple._2.next())).mkString(",")))
       }
     )
-    println("rddr:")
+
     assert(rddr.collect() === Array(
       (0, "(0,(0,0)),(1,(1,1)),(2,(2,2))"),
       (1, "(0,(0,0)),(1,(1,1)),(2,(2,2))"),

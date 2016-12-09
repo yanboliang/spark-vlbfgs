@@ -19,9 +19,9 @@ package org.apache.spark.ml.optim
 
 import breeze.optimize.{DiffFunction, StepSizeUnderflow, StrongWolfeLineSearch}
 import breeze.util.Implicits.scEnrichIterator
-
 import org.apache.spark.internal.Logging
 import org.apache.spark.ml.linalg.{DistributedVector => DV, DistributedVectors => DVs}
+import org.apache.spark.storage.StorageLevel
 
 class VectorFreeLBFGS(
     maxIter: Int = -1,
@@ -38,7 +38,7 @@ class VectorFreeLBFGS(
   protected def determineStepSize(
       state: State,
       fn: DVDiffFunction,
-      direction: DV): (Double, VFLineSearchDiffFun) = {
+      direction: DV): Double = {
     // using strong wolfe line search
     val x = state.x
     val grad = state.grad
@@ -51,11 +51,16 @@ class VectorFreeLBFGS(
     if (alpha * grad.norm < 1E-10) {
       throw new StepSizeUnderflow
     }
-    (alpha, lineSearchFn)
+
+    // release unused RDDs
+    lineSearchFn.disposeLastResult()
+
+    alpha
   }
 
   protected def takeStep(state: State, dir: DV, stepSize: Double): DV = {
     state.x.addScalVec(stepSize, dir)
+      .eagerPersist(StorageLevel.MEMORY_AND_DISK)
   }
 
   protected def adjust(newX: DV, newGrad: DV, newVal: Double): (Double, DV) = (newVal, newGrad)
@@ -97,7 +102,7 @@ class VectorFreeLBFGS(
     val infiniteIterations = Iterator.iterate(state0) { state =>
       try {
         val dir = history.computeDirection(state.x, state.adjustedGradient)
-        val (stepSize, lineSearchDiffFun) = determineStepSize(state, fn, dir)
+        val stepSize = determineStepSize(state, fn, dir)
 
         val x = takeStep(state, dir, stepSize)
         val (value, grad) = fn.calculate(x)
@@ -152,8 +157,14 @@ class VectorFreeLBFGS(
 }
 
 // Line Search DiffFunction
-class VFLineSearchDiffFun(x: DV, direction: DV, outer: DVDiffFunction)
+class VLineSearchDiffFun(x: DV, direction: DV, outer: DVDiffFunction)
   extends DiffFunction[Double]{
+
+  // store last point vector
+  var lastX: DV = null
+
+  // store last gradient vector
+  var lastGrad: DV = null
 
   // calculates the value at a point
   override def valueAt(alpha: Double): Double = calculate(alpha)._1
@@ -163,8 +174,30 @@ class VFLineSearchDiffFun(x: DV, direction: DV, outer: DVDiffFunction)
 
   // Calculates both the value and the gradient at a point
   def calculate(alpha: Double): (Double, Double) = {
-    val (ff, grad) = outer.calculate(x.addScalVec(alpha, direction))
+    // release unused RDDs
+    disposeLastResult()
+
+    lastX = x.addScalVec(alpha, direction)
+      .eagerPersist(StorageLevel.MEMORY_AND_DISK)
+    val (ff, grad) = outer.calculate(lastX)
+
+    lastGrad = grad
+
     ff -> (grad dot direction)
+  }
+
+  def disposeLastResult() = {
+    // release last point vector
+    if (lastX != null) {
+      lastX.unpersist()
+      lastX = null
+    }
+
+    // release last gradient vector
+    if (lastGrad != null) {
+      lastGrad.unpersist()
+      lastGrad = null
+    }
   }
 }
 
@@ -181,8 +214,8 @@ trait DVDiffFunction { outer =>
   // Calculates both the value and the gradient at a point
   def calculate(x: DV): (Double, DV)
 
-  def lineSearchDiffFunction(x: DV, direction: DV): VFLineSearchDiffFun
-    = new VFLineSearchDiffFun(x, direction, outer)
+  def lineSearchDiffFunction(x: DV, direction: DV): VLineSearchDiffFun
+    = new VLineSearchDiffFun(x, direction, outer)
 }
 
 object VectorFreeLBFGS {
@@ -321,7 +354,9 @@ object VectorFreeLBFGS {
           theta(i) -= b
         }
 
-        DVs.combine((theta.toSeq.zip(X) ++ tau.toSeq.zip(G)).filter(_._2 != null): _*).eagerPersist()
+        DVs.combine((theta.toSeq.zip(X) ++ tau.toSeq.zip(G))
+          .filter(_._2 != null): _*)
+          .eagerPersist()
       }
       k += 1
       dir
