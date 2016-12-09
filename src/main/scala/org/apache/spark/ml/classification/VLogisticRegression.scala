@@ -19,7 +19,6 @@ package org.apache.spark.ml.classification
 
 import scala.collection.mutable.ArrayBuffer
 import breeze.linalg.{DenseVector => BDV}
-
 import org.apache.spark.internal.Logging
 import org.apache.spark.ml.feature.Instance
 import org.apache.spark.ml.linalg.{DistributedVector => DV, DistributedVectors => DVs, _}
@@ -28,8 +27,9 @@ import org.apache.spark.ml.param.{IntParam, ParamMap, ParamValidators}
 import org.apache.spark.ml.param.shared._
 import org.apache.spark.ml.util._
 import org.apache.spark.mllib.linalg.VectorImplicits._
-import org.apache.spark.mllib.stat.OptimMultivariateOnlineSummarizer
+import org.apache.spark.mllib.stat.{MultivariateOnlineSummarizer, OptimMultivariateOnlineSummarizer}
 import org.apache.spark.SparkException
+import org.apache.spark.annotation.Since
 import org.apache.spark.mllib.util.MLUtils
 import org.apache.spark.rdd.RDD
 import org.apache.spark.sql.{Dataset, Row}
@@ -44,6 +44,7 @@ import org.apache.spark.util.DoubleAccumulator
 private[classification] trait VLogisticRegressionParams
   extends ProbabilisticClassifierParams with HasRegParam with HasMaxIter
     with HasTol with HasStandardization with HasWeightCol with HasThreshold
+    with HasFitIntercept
 
 object VLogisticRegression {
   val storageLevel = StorageLevel.MEMORY_AND_DISK
@@ -100,6 +101,9 @@ class VLogisticRegression(override val uid: String)
 
   def setStandardization(value: Boolean): this.type = set(standardization, value)
   setDefault(standardization -> true)
+
+  def setFitIntercept(value: Boolean): this.type = set(fitIntercept, value)
+  setDefault(fitIntercept -> true)
 
   def setWeightCol(value: String): this.type = set(weightCol, value)
 
@@ -174,9 +178,23 @@ class VLogisticRegression(override val uid: String)
           val weightArr = Array.tabulate(tupleArr.length)(idx => tupleArr(idx)._3)
           (labelArr, weightArr)
         }.persist(storageLevel)
+
     val weightSum = labelAndWeight.map(_._2.sum).sum()
 
     // println(s"weightSum: ${weightSum}")
+
+    val labelSummarizer = {
+      val seqOp = (c: MultiClassSummarizer, instance: Instance)
+        => c.add(instance.label, instance.weight)
+
+      val combOp = (c1: MultiClassSummarizer, c2: MultiClassSummarizer)
+        => c1.merge(c2)
+
+      instances.treeAggregate(new MultiClassSummarizer)(seqOp, combOp, 2)
+    }
+
+    val histogram = labelSummarizer.histogram
+
 
     // column-majar grid partitioner.
     var localRowPartitions = $(rowPartitions)
@@ -211,7 +229,7 @@ class VLogisticRegression(override val uid: String)
 
     val features: RDD[((Int, Int), SparseMatrix)] = VUtils.blockMatrixHorzZipVec(
         rawFeatures, featuresStd, gridPartitioner,
-        (sm: SparseMatrix, partFeatureStdVector: Vector) => {
+        (blockCoords: (Int, Int), sm: SparseMatrix, partFeatureStdVector: Vector) => {
           val partFeatureStdArr = partFeatureStdVector.asInstanceOf[DenseVector].values
           val arrBuf = new ArrayBuffer[(Int, Int, Double)]()
           sm.foreachActive { case (i: Int, j: Int, value: Double) =>
@@ -222,6 +240,7 @@ class VLogisticRegression(override val uid: String)
           SparseMatrix.fromCOO(sm.numCols, sm.numRows, arrBuf).transpose
         }).persist(storageLevel)
 
+    val localFitIntercept = $(fitIntercept)
     val costFun = new VBinomialLogisticCostFun(
       numFeatures,
       localColsPerBlock,
@@ -234,15 +253,42 @@ class VLogisticRegression(override val uid: String)
       rowBlocks,
       colBlocks,
       $(standardization),
-      featuresStd: DV,
-      $(regParam))
+      featuresStd,
+      $(regParam),
+      localFitIntercept)
 
     val optimizer = new VectorFreeLBFGS($(maxIter), 10, $(tol))
-    val initCoeffs = DVs.zeros(sc, localColsPerBlock, colBlocks, numFeatures).eagerPersist()
+
+    val initCoeffs: DV = if (localFitIntercept) {
+      /*
+        For binary logistic regression, when we initialize the coefficients as zeros,
+        it will converge faster if we initialize the intercept such that
+        it follows the distribution of the labels.
+
+        {{{
+          P(0) = 1 / (1 + \exp(b)), and
+          P(1) = \exp(b) / (1 + \exp(b))
+        }}}, hence
+        {{{
+          b = \log{P(1) / P(0)} = \log{count_1 / count_0}
+        }}}
+      */
+      val initIntercept = math.log(
+        histogram(1) / histogram(0))
+      DVs.zeros(
+        sc, localColsPerBlock, colBlocks, numFeatures + 1, initIntercept)
+    } else {
+      DVs.zeros(
+        sc, localColsPerBlock, colBlocks, numFeatures)
+    }.eagerPersist()
+
     val states = optimizer.iterations(costFun, initCoeffs)
 
     var state: optimizer.State = null
+    // var iterCnt = 0
     while (states.hasNext) {
+      // iterCnt += 1
+      // println(s"LBFGS iter $iterCnt")
       state = states.next()
     }
     if (state == null) {
@@ -252,25 +298,41 @@ class VLogisticRegression(override val uid: String)
     }
 
     val rawCoeffs = state.x // `x` already persisted.
-    val coeffs = rawCoeffs.zipPartitions(featuresStd) {
-      case (partCoeffs: Vector, partFeatursStd: Vector) =>
+
+    // println(s"rawCoeffs: ${rawCoeffs.toLocal.toString}")
+
+    val interceptValAccu = sc.doubleAccumulator
+    val coeffs = rawCoeffs.zipPartitionsWithIndex(
+      featuresStd, rawCoeffs.sizePerPart, numFeatures
+    ) {
+      case (pid: Int, partCoeffs: Vector, partFeatursStd: Vector) =>
         val partFeatursStdArr = partFeatursStd.toDense.toArray
-        val res = Array.fill(partCoeffs.size)(0.0)
+        val resArrSize =
+          if (localFitIntercept && pid == colBlocks - 1) partCoeffs.size - 1
+          else partCoeffs.size
+        val res = Array.fill(resArrSize)(0.0)
         partCoeffs.foreachActive { case (idx: Int, value: Double) =>
-          if (partFeatursStdArr(idx) != 0.0) {
-            res(idx) = value / partFeatursStdArr(idx)
+          val isIntercept =
+            (localFitIntercept && pid == colBlocks - 1 && idx == partCoeffs.size - 1)
+          if (!isIntercept) {
+            if (partFeatursStdArr(idx) != 0.0) {
+              res(idx) = value / partFeatursStdArr(idx)
+            }
+          } else {
+            interceptValAccu.add(value)
           }
         }
         Vectors.dense(res)
     }.eagerPersist()
-    val model = copyValues(new VLogisticRegressionModel(uid, coeffs))
+    val interceptVal = interceptValAccu.value
+    val model = copyValues(new VLogisticRegressionModel(uid, coeffs, interceptVal))
     model
   }
 
   override def copy(extra: ParamMap): VLogisticRegression = defaultCopy(extra)
 }
 
-private class VBinomialLogisticCostFun(
+private[ml] class VBinomialLogisticCostFun(
     _numFeatures: Long,
     _colsPerBlock: Int,
     _numInstances: Long,
@@ -283,7 +345,8 @@ private class VBinomialLogisticCostFun(
     _colBlocks: Int,
     _standardization: Boolean,
     _featuresStd: DV,
-    _regParamL2: Double) extends DVDiffFunction {
+    _regParamL2: Double,
+    _fitIntercept: Boolean) extends DVDiffFunction {
 
   import VLogisticRegression._
 
@@ -303,12 +366,17 @@ private class VBinomialLogisticCostFun(
     val standardization: Boolean = _standardization
     val featuresStd: DV = _featuresStd
     val regParamL2: Double = _regParamL2
+    val fitIntercept = _fitIntercept
 
     val lossAccu: DoubleAccumulator = features.sparkContext.doubleAccumulator
     val multipliers: RDD[Vector] = VUtils.blockMatrixHorzZipVec(
       features, coeffs, gridPartitioner,
-      (matrix: SparseMatrix, partCoeffs: Vector) => {
-        val partMarginArr = Array.fill[Double](matrix.numRows)(0.0)
+      (blockCoords: (Int, Int), matrix: SparseMatrix, partCoeffs: Vector) => {
+        val intercept = if (fitIntercept && blockCoords._2 == colBlocks - 1) {
+          // Get intercept from the last element of coefficients vector
+          partCoeffs(partCoeffs.size - 1)
+        } else 0.0
+        val partMarginArr = Array.fill[Double](matrix.numRows)(intercept)
         matrix.foreachActive { case (i: Int, j: Int, v: Double) =>
           partMarginArr(i) += (partCoeffs(j) * v)
         }
@@ -349,8 +417,14 @@ private class VBinomialLogisticCostFun(
     val lossSum = lossAccu.value / weightSum
 
     val grad: RDD[Vector] = VUtils.blockMatrixVertZipVec(features, multipliersDV, gridPartitioner,
-      (matrix: SparseMatrix, partMultipliers: Vector) => {
-        val partGradArr = Array.fill[Double](matrix.numCols)(0.0)
+      (blockCoords: (Int, Int), matrix: SparseMatrix, partMultipliers: Vector) => {
+        val partGradArr = if (fitIntercept && blockCoords._2 == colBlocks - 1) {
+          val arr = Array.fill[Double](matrix.numCols + 1)(0.0)
+          arr(arr.length - 1) = partMultipliers.toArray.sum
+          arr
+        } else {
+          Array.fill[Double](matrix.numCols)(0.0)
+        }
         matrix.foreachActive { case (i: Int, j: Int, v: Double) =>
           partGradArr(j) += (partMultipliers(i) * v)
         }
@@ -372,34 +446,49 @@ private class VBinomialLogisticCostFun(
         Vectors.dense(partGradsArr)
       }
 
-    val gradDV: DV = new DV(grad, colsPerBlock, colBlocks, numFeatures).eagerPersist(storageLevel)
+    val gradDV: DV = new DV(grad, colsPerBlock, colBlocks,
+      if (fitIntercept) numFeatures + 1 else numFeatures
+    ).eagerPersist(storageLevel)
+
+    // println(s"gradDV: ${gradDV.toLocal.toString}")
 
     // compute regularization for grad & objective value
     val lossRegAccu = gradDV.vecs.sparkContext.doubleAccumulator
     val gradDVWithReg: DV = if (standardization) {
-      gradDV.zipPartitions(coeffs) { case (partGrads: Vector, partCoeffs: Vector) =>
-        var lossReg = 0.0
-        val partGradArr = partGrads.toArray
-        val res = Array.fill[Double](partGrads.size)(0.0)
-        partCoeffs.foreachActive { case (i: Int, value: Double) =>
-          res(i) = partGradArr(i) + regParamL2 * value
-          lossReg += (value * value)
-        }
-        lossRegAccu.add(lossReg)
-        Vectors.dense(res)
+      gradDV.zipPartitionsWithIndex(coeffs) {
+        case (pid: Int, partGrads: Vector, partCoeffs: Vector) =>
+          var lossReg = 0.0
+          val partGradArr = partGrads.toArray
+          val res = Array.fill[Double](partGrads.size)(0.0)
+          partCoeffs.foreachActive { case (i: Int, value: Double) =>
+            val isIntercept = (fitIntercept && pid == colBlocks - 1 && i == partCoeffs.size - 1)
+            if (!isIntercept) {
+              res(i) = partGradArr(i) + regParamL2 * value
+              lossReg += (value * value)
+            } else {
+              res(i) = partGradArr(i)
+            }
+          }
+          lossRegAccu.add(lossReg)
+          Vectors.dense(res)
       }
     } else {
-      gradDV.zipPartitions(coeffs, featuresStd) {
-        (partGrads: Vector, partCoeffs: Vector, partFeaturesStds: Vector) =>
+      gradDV.zipPartitionsWithIndex(coeffs, featuresStd) {
+        case (pid: Int, partGrads: Vector, partCoeffs: Vector, partFeaturesStds: Vector) =>
           var lossReg = 0.0
           val partGradArr = partGrads.toArray
           val partFeaturesStdArr = partFeaturesStds.toArray
           val res = Array.fill[Double](partGradArr.length)(0.0)
           partCoeffs.foreachActive { case (i: Int, value: Double) =>
-            if (partFeaturesStdArr(i) != 0.0) {
-              val temp = value / (partFeaturesStdArr(i) * partFeaturesStdArr(i))
-              res(i) = partGradArr(i) + regParamL2 * temp
-              lossReg += (value * temp)
+            val isIntercept = (fitIntercept && pid == colBlocks - 1 && i == partCoeffs.size - 1)
+            if (!isIntercept) {
+              if (partFeaturesStdArr(i) != 0.0) {
+                val temp = value / (partFeaturesStdArr(i) * partFeaturesStdArr(i))
+                res(i) = partGradArr(i) + regParamL2 * temp
+                lossReg += (value * temp)
+              }
+            } else {
+              res(i) = partGradArr(i)
             }
           }
           lossRegAccu.add(lossReg)
@@ -408,6 +497,9 @@ private class VBinomialLogisticCostFun(
     }
 
     gradDVWithReg.eagerPersist(storageLevel)
+
+    // println(s"gradDVWithReg: ${gradDVWithReg.toLocal.toString}")
+
     val regSum = lossRegAccu.value
     (lossSum + 0.5 * regParamL2 * regSum, gradDVWithReg)
   }
@@ -418,7 +510,9 @@ private class VBinomialLogisticCostFun(
  */
 class VLogisticRegressionModel private[spark](
     override val uid: String,
-    val coefficients: DV) extends ProbabilisticClassificationModel[Vector, VLogisticRegressionModel]
+    val coefficients: DV,
+    val intercept: Double)
+  extends ProbabilisticClassificationModel[Vector, VLogisticRegressionModel]
   with VLogisticRegressionParams {
 
   /** Margin (rawPrediction) for class label 1.  For binary classification only. */
@@ -464,7 +558,9 @@ class VLogisticRegressionModel private[spark](
   }
 
   override def copy(extra: ParamMap): VLogisticRegressionModel = {
-    val newModel = copyValues(new VLogisticRegressionModel(uid, coefficients), extra)
+    val newModel = copyValues(
+      new VLogisticRegressionModel(uid, coefficients, intercept),
+      extra)
     newModel.setParent(parent)
   }
 }

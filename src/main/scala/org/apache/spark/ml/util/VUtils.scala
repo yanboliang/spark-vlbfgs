@@ -137,7 +137,7 @@ private[ml] object VUtils {
       blockMatrixRDD: RDD[((Int, Int), SparseMatrix)],
       dvec: DistributedVector,
       gridPartitioner: GridPartitionerV2,
-      f: ((SparseMatrix, Vector) => T)
+      f: (((Int, Int), SparseMatrix, Vector) => T)
   ): RDD[((Int, Int), T)] = {
     import org.apache.spark.rdd.VRDDFunctions._
     require(gridPartitioner.cols == dvec.nParts)
@@ -159,7 +159,7 @@ private[ml] object VUtils {
         }
         mIter.map { case ((rowBlockIdx: Int, colBlockIdx: Int), sm: SparseMatrix) =>
           val vecPart = vMap(colBlockIdx)
-          ((rowBlockIdx, colBlockIdx), f(sm, vecPart))
+          ((rowBlockIdx, colBlockIdx), f((rowBlockIdx, colBlockIdx), sm, vecPart))
         }
       }
     )
@@ -169,7 +169,7 @@ private[ml] object VUtils {
       blockMatrixRDD: RDD[((Int, Int), SparseMatrix)],
       dvec: DistributedVector,
       gridPartitioner: GridPartitionerV2,
-      f: (((SparseMatrix, Vector) => T))
+      f: (((Int, Int), SparseMatrix, Vector) => T)
   ): RDD[((Int, Int), T)] = {
     import org.apache.spark.rdd.VRDDFunctions._
     require(gridPartitioner.rows == dvec.nParts)
@@ -191,7 +191,7 @@ private[ml] object VUtils {
         }
         mIter.map { case ((rowBlockIdx: Int, colBlockIdx: Int), sm: SparseMatrix) =>
           val horzPart = vMap(rowBlockIdx)
-          ((rowBlockIdx, colBlockIdx), f(sm, horzPart))
+          ((rowBlockIdx, colBlockIdx), f((rowBlockIdx, colBlockIdx), sm, horzPart))
         }
       }
     )

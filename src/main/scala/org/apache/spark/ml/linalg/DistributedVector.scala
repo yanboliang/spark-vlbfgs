@@ -99,7 +99,7 @@ class DistributedVector(
   }
 
   def zipPartitions(dv2: DistributedVector)(f: (Vector, Vector) => Vector) = {
-    require(sizePerPart == dv2.sizePerPart && nParts == dv2.nParts && nSize == dv2.nSize)
+    require(sizePerPart == dv2.sizePerPart && nParts == dv2.nParts)
 
     new DistributedVector(
       vecs.zip(dv2.vecs).map {
@@ -108,15 +108,48 @@ class DistributedVector(
       }, sizePerPart, nParts, nSize)
   }
 
-  def zipPartitions(dv2: DistributedVector, dv3: DistributedVector)(f: (Vector, Vector, Vector) => Vector) = {
-    require(sizePerPart == dv2.sizePerPart && nParts == dv2.nParts && nSize == dv2.nSize)
-    require(sizePerPart == dv3.sizePerPart && nParts == dv3.nParts && nSize == dv3.nSize)
+  def zipPartitionsWithIndex(dv2: DistributedVector, newSizePerPart: Int = 0, newSize: Long = 0)
+                            (f: (Int, Vector, Vector) => Vector) = {
+    require(nParts == dv2.nParts)
+
+    new DistributedVector(
+      vecs.zip(dv2.vecs).mapPartitionsWithIndex(
+        (pid: Int, iter: Iterator[(Vector, Vector)]) => {
+          iter.map {
+            case (vec1: Vector, vec2: Vector) =>
+              f(pid, vec1, vec2)
+          }
+        }),
+      if (newSizePerPart == 0) sizePerPart else newSizePerPart,
+      nParts,
+      if (newSize == 0) nSize else newSize)
+  }
+
+  def zipPartitions(dv2: DistributedVector, dv3: DistributedVector)
+                   (f: (Vector, Vector, Vector) => Vector) = {
+    require(sizePerPart == dv2.sizePerPart && nParts == dv2.nParts)
+    require(sizePerPart == dv3.sizePerPart && nParts == dv3.nParts)
 
     new DistributedVector(
       vecs.zip(dv2.vecs).zip(dv3.vecs).map {
         case ((vec1: Vector, vec2: Vector), vec3: Vector) =>
           f(vec1, vec2, vec3)
       }, sizePerPart, nParts, nSize)
+  }
+
+  def zipPartitionsWithIndex(dv2: DistributedVector, dv3: DistributedVector)
+                   (f: (Int, Vector, Vector, Vector) => Vector) = {
+    require(sizePerPart == dv2.sizePerPart && nParts == dv2.nParts)
+    require(sizePerPart == dv3.sizePerPart && nParts == dv3.nParts)
+
+    new DistributedVector(
+      vecs.zip(dv2.vecs).zip(dv3.vecs).mapPartitionsWithIndex(
+        (pid: Int, iter: Iterator[((Vector, Vector), Vector)]) => {
+          iter.map {
+            case ((vec1: Vector, vec2: Vector), vec3: Vector) =>
+              f(pid, vec1, vec2, vec3)
+          }
+        }), sizePerPart, nParts, nSize)
   }
 
   def toLocal: Vector = {
@@ -159,7 +192,8 @@ private class AggrScalVec(var vec: Vector) extends Serializable {
 
 object DistributedVectors {
 
-  def zeros(sc: SparkContext, sizePerPart: Int, nParts: Int, nSize: Long): DistributedVector = {
+  def zeros(sc: SparkContext, sizePerPart: Int, nParts: Int, nSize: Long, lastVal: Double = 0.0)
+    : DistributedVector = {
     val lastPartSize = (nSize - sizePerPart * (nParts - 1)).toInt
     val vecs = sc.parallelize(Array.tabulate(nParts)(x => (x, x)).toSeq, nParts)
       .mapPartitions{iter => {
@@ -169,7 +203,11 @@ object DistributedVectors {
       .partitionBy(new DistributedVectorPartitioner(nParts))
       .map{ case(idx: Int, idx2: Int) =>
           if (idx < nParts - 1) { Vectors.zeros(sizePerPart) }
-          else { Vectors.zeros(lastPartSize) }
+          else {
+            val vec = Vectors.zeros(lastPartSize)
+            vec.toArray(lastPartSize - 1) = lastVal
+            vec
+          }
       }
     new DistributedVector(vecs, sizePerPart, nParts, nSize)
   }
