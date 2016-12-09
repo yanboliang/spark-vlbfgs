@@ -19,30 +19,89 @@ package org.apache.spark.ml.classification
 
 import scala.language.existentials
 import scala.util.Random
-
 import org.apache.spark.SparkFunSuite
 import org.apache.spark.ml.classification.LogisticRegressionSuite._
 import org.apache.spark.ml.feature.{Instance, LabeledPoint}
 import org.apache.spark.ml.linalg.{Vector, Vectors}
 import org.apache.spark.ml.util.TestingUtils._
 import org.apache.spark.mllib.util.MLlibTestSparkContext
+import org.apache.spark.sql.DataFrame
 
 class VLogisticRegressionSuite extends SparkFunSuite with MLlibTestSparkContext {
 
   override def beforeAll(): Unit = {
     super.beforeAll()
+
+    testData1 = genLORTestData(
+      nPoints = 20,
+      coefficients = Array(-0.57997, 0.912083, -0.371077, -0.819866),
+      xMean = Array(5.843, 3.057, 3.758, 1.199),
+      xVariance = Array(0.6856, 0.1899, 3.116, 0.581),
+      addIntecept = false
+    )._2
+
+    testData1WithIntecept = genLORTestData(
+      nPoints = 20,
+      coefficients = Array(-0.57997, 0.912083, -0.371077, -0.819866, 2.688191),
+      xMean = Array(5.843, 3.057, 3.758, 1.199),
+      xVariance = Array(0.6856, 0.1899, 3.116, 0.581),
+      addIntecept = true
+    )._2
   }
 
-  val data1 = Seq(
-    Instance(1.0, 1.0, Vectors.dense(1.0, 0.0, -2.1, -1.5).toSparse),
-    Instance(0.0, 2.0, Vectors.dense(0.9, 0.0, -2.1, -1.1).toSparse),
-    Instance(1.0, 3.5, Vectors.dense(1.0, 0.0, 0.0, 1.2).toSparse),
-    Instance(0.0, 0.0, Vectors.dense(-1.5, 0.0, -0.5, 0.0).toSparse),
-    Instance(1.0, 1.0, Vectors.dense(-1.9, 0.0, -0.3, -1.5).toSparse)
-  )
+  var testData1: DataFrame = null
+  var testData1WithIntecept: DataFrame = null
 
-  test("test on data1, w/ weight, L2 reg = 0, w/o intercept") {
-    val df1 = spark.createDataFrame(sc.parallelize(data1, 2))
+  def genLORTestData(
+                   nPoints: Int,
+                   coefficients: Array[Double],
+                   xMean: Array[Double],
+                   xVariance: Array[Double],
+                   addIntecept: Boolean
+                 ): (DataFrame, DataFrame) = {
+
+    val testData = generateMultinomialLogisticInput(
+        coefficients, xMean, xVariance, addIntecept, nPoints, 42)
+
+    // Let's over-sample the positive samples twice.
+    val data1 = testData.flatMap { case labeledPoint: LabeledPoint =>
+      if (labeledPoint.label == 1.0) {
+        Iterator(labeledPoint, labeledPoint)
+      } else {
+        Iterator(labeledPoint)
+      }
+    }
+
+    val rnd = new Random(8392)
+    val data2 = testData.flatMap { case LabeledPoint(label: Double, features: Vector) =>
+      if (rnd.nextGaussian() > 0.0) {
+        if (label == 1.0) {
+          Iterator(
+            Instance(label, 1.2, features),
+            Instance(label, 0.8, features),
+            Instance(0.0, 0.0, features))
+        } else {
+          Iterator(
+            Instance(label, 0.3, features),
+            Instance(1.0, 0.0, features),
+            Instance(label, 0.1, features),
+            Instance(label, 0.6, features))
+        }
+      } else {
+        if (label == 1.0) {
+          Iterator(Instance(label, 2.0, features))
+        } else {
+          Iterator(Instance(label, 1.0, features))
+        }
+      }
+    }
+
+    (spark.createDataFrame(sc.parallelize(data1, 4)),
+      spark.createDataFrame(sc.parallelize(data2, 4)))
+  }
+
+
+  test("test on testData1, w/ weight, L2 reg = 0, w/o intercept") {
 
     val vtrainer = new VLogisticRegression()
       .setFitIntercept(false)
@@ -51,49 +110,21 @@ class VLogisticRegressionSuite extends SparkFunSuite with MLlibTestSparkContext 
       .setWeightCol("weight")
       .setRegParam(0.0)
       .setStandardization(true)
-    val vmodel = vtrainer.fit(df1)
+    val vmodel = vtrainer.fit(testData1)
 
     val trainer = new LogisticRegression()
       .setFitIntercept(false)
       .setWeightCol("weight")
       .setRegParam(0.0)
       .setStandardization(true)
-    val model = trainer.fit(df1)
+    val model = trainer.fit(testData1)
 
     println(s"VLogisticRegression coefficients: ${vmodel.coefficients.toLocal}\n" +
       s"LogisticRegression coefficients: ${model.coefficients}")
     assert(vmodel.coefficients.toLocal ~== model.coefficients relTol 1E-5)
   }
 
-  test("test on data1, w/ weight, L2 reg = 0, w/ intercept") {
-    val df1 = spark.createDataFrame(sc.parallelize(data1, 2))
-
-    val vtrainer = new VLogisticRegression()
-      .setFitIntercept(true)
-      .setColsPerBlock(3)
-      .setRowsPerBlock(2)
-      .setWeightCol("weight")
-      .setRegParam(0.0)
-      .setStandardization(true)
-    val vmodel = vtrainer.fit(df1)
-
-    val trainer = new LogisticRegression()
-      .setFitIntercept(true)
-      .setWeightCol("weight")
-      .setRegParam(0.0)
-      .setStandardization(true)
-    val model = trainer.fit(df1)
-
-    println(s"VLogisticRegression coefficients: ${vmodel.coefficients.toLocal}\n" +
-      s"LogisticRegression coefficients: ${model.coefficients}")
-    assert(vmodel.coefficients.toLocal ~== model.coefficients relTol 1E-5)
-    println(s"VLogisticRegression intercept: ${vmodel.intercept}\n" +
-      s"LogisticRegression intercept: ${model.intercept}")
-    assert(vmodel.intercept ~== model.intercept relTol 1E-5)
-  }
-
-  test("test on data1, w/o weight, L2 reg = 0, w/o intercept") {
-    val df1 = spark.createDataFrame(sc.parallelize(data1, 2))
+  test("test on testData1, w/o weight, L2 reg = 0, w/o intercept") {
 
     val vtrainer = new VLogisticRegression()
       .setFitIntercept(false)
@@ -101,46 +132,20 @@ class VLogisticRegressionSuite extends SparkFunSuite with MLlibTestSparkContext 
       .setRowsPerBlock(3)
       .setRegParam(0.0)
       .setStandardization(true)
-    val vmodel = vtrainer.fit(df1)
+    val vmodel = vtrainer.fit(testData1)
 
     val trainer = new LogisticRegression()
       .setFitIntercept(false)
       .setRegParam(0.0)
       .setStandardization(true)
-    val model = trainer.fit(df1)
+    val model = trainer.fit(testData1)
 
     println(s"VLogisticRegression coefficients: ${vmodel.coefficients.toLocal}\n" +
       s"LogisticRegression coefficients: ${model.coefficients}")
     assert(vmodel.coefficients.toLocal ~== model.coefficients relTol 1E-5)
   }
 
-  test("test on data1, w/o weight, L2 reg = 0, w/ intercept") {
-    val df1 = spark.createDataFrame(sc.parallelize(data1, 2))
-
-    val vtrainer = new VLogisticRegression()
-      .setFitIntercept(true)
-      .setColsPerBlock(2)
-      .setRowsPerBlock(3)
-      .setRegParam(0.0)
-      .setStandardization(true)
-    val vmodel = vtrainer.fit(df1)
-
-    val trainer = new LogisticRegression()
-      .setFitIntercept(true)
-      .setRegParam(0.0)
-      .setStandardization(true)
-    val model = trainer.fit(df1)
-
-    println(s"VLogisticRegression coefficients: ${vmodel.coefficients.toLocal}\n" +
-      s"LogisticRegression coefficients: ${model.coefficients}")
-    assert(vmodel.coefficients.toLocal ~== model.coefficients relTol 1E-5)
-    println(s"VLogisticRegression intercept: ${vmodel.intercept}\n" +
-      s"LogisticRegression intercept: ${model.intercept}")
-    assert(vmodel.intercept ~== model.intercept relTol 1E-5)
-  }
-
-  test("test on data1, w/ weight, L2 reg = 0.8, w/ standardize, w/o intercept") {
-    val df1 = spark.createDataFrame(sc.parallelize(data1, 2))
+  test("test on testData1, w/ weight, L2 reg = 0.8, w/ standardize, w/o intercept") {
 
     val vtrainer = new VLogisticRegression()
       .setFitIntercept(false)
@@ -151,22 +156,94 @@ class VLogisticRegressionSuite extends SparkFunSuite with MLlibTestSparkContext 
       .setWeightCol("weight")
       .setRegParam(0.8)
       .setStandardization(true)
-    val vmodel = vtrainer.fit(df1)
+    val vmodel = vtrainer.fit(testData1)
 
     val trainer = new LogisticRegression()
       .setFitIntercept(false)
       .setWeightCol("weight")
       .setRegParam(0.8)
       .setStandardization(true)
-    val model = trainer.fit(df1)
+    val model = trainer.fit(testData1)
 
     println(s"VLogisticRegression coefficients: ${vmodel.coefficients.toLocal}\n" +
       s"LogisticRegression coefficient: ${model.coefficients}")
     assert(vmodel.coefficients.toLocal ~== model.coefficients relTol 1E-5)
   }
 
-  test("test on data1, w/ weight, L2 reg = 0.8, w/ standardize, w/ intercept") {
-    val df1 = spark.createDataFrame(sc.parallelize(data1, 2))
+  test("test on testData1, w/ weight, L2 reg = 0.8, w/o standardize, w/o intercept") {
+
+    val vtrainer = new VLogisticRegression()
+      .setFitIntercept(false)
+      .setColsPerBlock(4)
+      .setRowsPerBlock(5)
+      .setWeightCol("weight")
+      .setRegParam(0.8)
+      .setStandardization(false)
+    val vmodel = vtrainer.fit(testData1)
+
+    val trainer = new LogisticRegression()
+      .setFitIntercept(false)
+      .setWeightCol("weight")
+      .setRegParam(0.8)
+      .setStandardization(false)
+    val model = trainer.fit(testData1)
+
+    println(s"VLogisticRegression coefficients: ${vmodel.coefficients.toLocal}\n" +
+      s"LogisticRegression coefficient: ${model.coefficients}")
+    assert(vmodel.coefficients.toLocal ~== model.coefficients relTol 1E-5)
+  }
+
+  test("test on testData1WithIntecept, w/ weight, L2 reg = 0, w/ intercept") {
+
+    val vtrainer = new VLogisticRegression()
+      .setFitIntercept(true)
+      .setColsPerBlock(3)
+      .setRowsPerBlock(2)
+      .setWeightCol("weight")
+      .setRegParam(0.0)
+      .setStandardization(true)
+    val vmodel = vtrainer.fit(testData1WithIntecept)
+
+    val trainer = new LogisticRegression()
+      .setFitIntercept(true)
+      .setWeightCol("weight")
+      .setRegParam(0.0)
+      .setStandardization(true)
+    val model = trainer.fit(testData1WithIntecept)
+
+    println(s"VLogisticRegression coefficients: ${vmodel.coefficients.toLocal}\n" +
+      s"LogisticRegression coefficients: ${model.coefficients}")
+    assert(vmodel.coefficients.toLocal ~== model.coefficients relTol 1E-5)
+    println(s"VLogisticRegression intercept: ${vmodel.intercept}\n" +
+      s"LogisticRegression intercept: ${model.intercept}")
+    assert(vmodel.intercept ~== model.intercept relTol 1E-5)
+  }
+
+  test("test on testData1WithIntecept, w/o weight, L2 reg = 0, w/ intercept") {
+
+    val vtrainer = new VLogisticRegression()
+      .setFitIntercept(true)
+      .setColsPerBlock(2)
+      .setRowsPerBlock(3)
+      .setRegParam(0.0)
+      .setStandardization(true)
+    val vmodel = vtrainer.fit(testData1WithIntecept)
+
+    val trainer = new LogisticRegression()
+      .setFitIntercept(true)
+      .setRegParam(0.0)
+      .setStandardization(true)
+    val model = trainer.fit(testData1WithIntecept)
+
+    println(s"VLogisticRegression coefficients: ${vmodel.coefficients.toLocal}\n" +
+      s"LogisticRegression coefficients: ${model.coefficients}")
+    assert(vmodel.coefficients.toLocal ~== model.coefficients relTol 1E-5)
+    println(s"VLogisticRegression intercept: ${vmodel.intercept}\n" +
+      s"LogisticRegression intercept: ${model.intercept}")
+    assert(vmodel.intercept ~== model.intercept relTol 1E-5)
+  }
+
+  test("test on testData1WithIntecept, w/ weight, L2 reg = 0.8, w/ standardize, w/ intercept") {
 
     val vtrainer = new VLogisticRegression()
       .setFitIntercept(true)
@@ -177,14 +254,14 @@ class VLogisticRegressionSuite extends SparkFunSuite with MLlibTestSparkContext 
       .setWeightCol("weight")
       .setRegParam(0.8)
       .setStandardization(true)
-    val vmodel = vtrainer.fit(df1)
+    val vmodel = vtrainer.fit(testData1WithIntecept)
 
     val trainer = new LogisticRegression()
       .setFitIntercept(true)
       .setWeightCol("weight")
       .setRegParam(0.8)
       .setStandardization(true)
-    val model = trainer.fit(df1)
+    val model = trainer.fit(testData1WithIntecept)
 
     println(s"VLogisticRegression coefficients: ${vmodel.coefficients.toLocal}\n" +
       s"LogisticRegression coefficient: ${model.coefficients}")
@@ -194,32 +271,7 @@ class VLogisticRegressionSuite extends SparkFunSuite with MLlibTestSparkContext 
     assert(vmodel.intercept ~== model.intercept relTol 1E-5)
   }
 
-  test("test on data1, w/ weight, L2 reg = 0.8, w/o standardize, w/o intercept") {
-    val df1 = spark.createDataFrame(sc.parallelize(data1, 2))
-
-    val vtrainer = new VLogisticRegression()
-      .setFitIntercept(false)
-      .setColsPerBlock(4)
-      .setRowsPerBlock(5)
-      .setWeightCol("weight")
-      .setRegParam(0.8)
-      .setStandardization(false)
-    val vmodel = vtrainer.fit(df1)
-
-    val trainer = new LogisticRegression()
-      .setFitIntercept(false)
-      .setWeightCol("weight")
-      .setRegParam(0.8)
-      .setStandardization(false)
-    val model = trainer.fit(df1)
-
-    println(s"VLogisticRegression coefficients: ${vmodel.coefficients.toLocal}\n" +
-      s"LogisticRegression coefficient: ${model.coefficients}")
-    assert(vmodel.coefficients.toLocal ~== model.coefficients relTol 1E-5)
-  }
-
-  test("test on data1, w/ weight, L2 reg = 0.8, w/o standardize, w/ intercept") {
-    val df1 = spark.createDataFrame(sc.parallelize(data1, 2))
+  test("test on testData1WithIntecept, w/ weight, L2 reg = 0.8, w/o standardize, w/ intercept") {
 
     val vtrainer = new VLogisticRegression()
       .setFitIntercept(true)
@@ -228,14 +280,14 @@ class VLogisticRegressionSuite extends SparkFunSuite with MLlibTestSparkContext 
       .setWeightCol("weight")
       .setRegParam(0.8)
       .setStandardization(false)
-    val vmodel = vtrainer.fit(df1)
+    val vmodel = vtrainer.fit(testData1WithIntecept)
 
     val trainer = new LogisticRegression()
       .setFitIntercept(true)
       .setWeightCol("weight")
       .setRegParam(0.8)
       .setStandardization(false)
-    val model = trainer.fit(df1)
+    val model = trainer.fit(testData1WithIntecept)
 
     println(s"VLogisticRegression coefficients: ${vmodel.coefficients.toLocal}\n" +
       s"LogisticRegression coefficient: ${model.coefficients}")
@@ -246,50 +298,14 @@ class VLogisticRegressionSuite extends SparkFunSuite with MLlibTestSparkContext 
   }
 
   test("VLogisticRegression (binary) w/ weighted samples") {
-    val (dataset, weightedDataset) = {
-      val nPoints = 20
-      val coefficients = Array(-0.57997, 0.912083)
-      val xMean = Array(0.1, -0.1)
-      val xVariance = Array(0.6856, 0.1899)
-      val testData =
-        generateMultinomialLogisticInput(coefficients, xMean, xVariance, false, nPoints, 42)
 
-      // Let's over-sample the positive samples twice.
-      val data1 = testData.flatMap { case labeledPoint: LabeledPoint =>
-        if (labeledPoint.label == 1.0) {
-          Iterator(labeledPoint, labeledPoint)
-        } else {
-          Iterator(labeledPoint)
-        }
-      }
-
-      val rnd = new Random(8392)
-      val data2 = testData.flatMap { case LabeledPoint(label: Double, features: Vector) =>
-        if (rnd.nextGaussian() > 0.0) {
-          if (label == 1.0) {
-            Iterator(
-              Instance(label, 1.2, features),
-              Instance(label, 0.8, features),
-              Instance(0.0, 0.0, features))
-          } else {
-            Iterator(
-              Instance(label, 0.3, features),
-              Instance(1.0, 0.0, features),
-              Instance(label, 0.1, features),
-              Instance(label, 0.6, features))
-          }
-        } else {
-          if (label == 1.0) {
-            Iterator(Instance(label, 2.0, features))
-          } else {
-            Iterator(Instance(label, 1.0, features))
-          }
-        }
-      }
-
-      (spark.createDataFrame(sc.parallelize(data1, 4)),
-        spark.createDataFrame(sc.parallelize(data2, 4)))
-    }
+    val (dataset, weightedDataset) = genLORTestData(
+      nPoints = 20,
+      coefficients = Array(-0.57997, 0.912083),
+      xMean = Array(0.1, -0.1),
+      xVariance = Array(0.6856, 0.1899),
+      addIntecept = false
+    )
 
     val vtrainer1 = new VLogisticRegression()
       .setFitIntercept(false)
@@ -326,4 +342,5 @@ class VLogisticRegressionSuite extends SparkFunSuite with MLlibTestSparkContext 
     println(s"model: ${model.coefficients}")
     assert(model.coefficients ~== vmodel1.coefficients.toLocal absTol 1E-5)
   }
+
 }
