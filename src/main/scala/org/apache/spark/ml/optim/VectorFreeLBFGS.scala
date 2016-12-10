@@ -26,7 +26,9 @@ import org.apache.spark.storage.StorageLevel
 class VectorFreeLBFGS(
     maxIter: Int = -1,
     m: Int = 7,
-    tolerance: Double = 1E-9) extends Logging {
+    tolerance: Double = 1E-9,
+    eagerPersist: Boolean = true) extends Logging {
+
   import VectorFreeLBFGS._
   require(m > 0)
 
@@ -36,9 +38,9 @@ class VectorFreeLBFGS(
   type State = VectorFreeLBFGS.State
 
   protected def determineStepSize(
-      state: State,
-      fn: DVDiffFunction,
-      direction: DV): Double = {
+                                   state: State,
+                                   fn: VDiffFunction,
+                                   direction: DV): Double = {
     // using strong wolfe line search
     val x = state.x
     val grad = state.grad
@@ -60,7 +62,7 @@ class VectorFreeLBFGS(
 
   protected def takeStep(state: State, dir: DV, stepSize: Double): DV = {
     state.x.addScalVec(stepSize, dir)
-      .eagerPersist(StorageLevel.MEMORY_AND_DISK)
+      .persist(StorageLevel.MEMORY_AND_DISK, eager = eagerPersist)
   }
 
   protected def adjust(newX: DV, newGrad: DV, newVal: Double): (Double, DV) = (newVal, newGrad)
@@ -85,7 +87,7 @@ class VectorFreeLBFGS(
     }
   }
 
-  protected def initialState(fn: DVDiffFunction, init: DV): State = {
+  protected def initialState(fn: VDiffFunction, init: DV): State = {
     val x = init
     val (value, grad) = fn.calculate(x)
     val (adjValue, adjGrad) = adjust(x, grad, value)
@@ -95,19 +97,23 @@ class VectorFreeLBFGS(
 
   // the `fn` is responsible for output `grad` persist.
   // the `init` must be persisted before this interface called.
-  def iterations(fn: DVDiffFunction, init: DV): Iterator[State] = {
-    val history = new History(m)
+  def iterations(fn: VDiffFunction, init: DV): Iterator[State] = {
+    val history = new History(m, eagerPersist)
     val state0 = initialState(fn, init)
 
     val infiniteIterations = Iterator.iterate(state0) { state =>
       try {
         val dir = history.computeDirection(state.x, state.adjustedGradient)
+        assert(dir.isPersisted)
         val stepSize = determineStepSize(state, fn, dir)
 
         val x = takeStep(state, dir, stepSize)
+        assert(x.isPersisted)
         val (value, grad) = fn.calculate(x)
+        assert(grad.isPersisted)
         dir.unpersist()
         val (adjValue, adjGrad) = adjust(x, grad, value)
+        assert(adjGrad.isPersisted)
 
         val newState = State(x, value, grad, adjValue, adjGrad, state.iter + 1,
           state.initialAdjVal, (state.fValHistory :+ value).takeRight(fvalMemory),
@@ -145,19 +151,19 @@ class VectorFreeLBFGS(
     }
   }
 
-  def minimize(fn: DVDiffFunction, init: DV): DV = {
+  def minimize(fn: VDiffFunction, init: DV): DV = {
     minimizeAndReturnState(fn, init).x
   }
 
 
-  def minimizeAndReturnState(fn: DVDiffFunction, init: DV): State = {
+  def minimizeAndReturnState(fn: VDiffFunction, init: DV): State = {
     iterations(fn, init).last
   }
 
 }
 
 // Line Search DiffFunction
-class VLineSearchDiffFun(x: DV, direction: DV, outer: DVDiffFunction)
+class VLineSearchDiffFun(x: DV, direction: DV, outer: VDiffFunction, eagerPersist: Boolean)
   extends DiffFunction[Double]{
 
   // store last point vector
@@ -178,8 +184,10 @@ class VLineSearchDiffFun(x: DV, direction: DV, outer: DVDiffFunction)
     disposeLastResult()
 
     lastX = x.addScalVec(alpha, direction)
-      .eagerPersist(StorageLevel.MEMORY_AND_DISK)
+      .persist(StorageLevel.MEMORY_AND_DISK, eager = eagerPersist)
     val (ff, grad) = outer.calculate(lastX)
+
+    assert(grad.isPersisted)
 
     lastGrad = grad
 
@@ -201,7 +209,7 @@ class VLineSearchDiffFun(x: DV, direction: DV, outer: DVDiffFunction)
   }
 }
 
-trait DVDiffFunction { outer =>
+abstract class VDiffFunction(eagerPersist: Boolean = true) { outer =>
 
   // calculates the gradient at a point
   def gradientAt(x: DV): DV = calculate(x)._2
@@ -215,7 +223,7 @@ trait DVDiffFunction { outer =>
   def calculate(x: DV): (Double, DV)
 
   def lineSearchDiffFunction(x: DV, direction: DV): VLineSearchDiffFun
-    = new VLineSearchDiffFun(x, direction, outer)
+    = new VLineSearchDiffFun(x, direction, outer, eagerPersist)
 }
 
 object VectorFreeLBFGS {
@@ -240,7 +248,7 @@ object VectorFreeLBFGS {
       var convergenceFlag: Int) {
   }
 
-  case class History(m: Int) {
+  case class History(m: Int, eagerPersist: Boolean) {
     require(m > 0)
 
     private var k = 0
@@ -302,6 +310,15 @@ object VectorFreeLBFGS {
       shift(GGdot)
       shift(XGdot)
 
+      for (i <- 0 until m1) {
+        if (X(i) != null ) {
+          assert(X(i).isPersisted)
+        }
+        if (G(i) != null) {
+          assert(G(i).isPersisted)
+        }
+      }
+
       val start = math.max(m - k, 0)
       val taskList =
         (start to m).map(i => ("XX", i, m)) ++
@@ -315,7 +332,7 @@ object VectorFreeLBFGS {
       var dir: DV = null
       // compute direction, Vector-free two loop recursion, generate coefficients theta & tau
       dir = if (k == 0) {
-        G(m).scale(-1).eagerPersist()
+        G(m).scale(-1).persist(StorageLevel.MEMORY_AND_DISK, eager = eagerPersist)
       } else {
         val theta = Array.fill(m1)(0.0)
         val tau = Array.fill(m1)(0.0)
@@ -356,7 +373,7 @@ object VectorFreeLBFGS {
 
         DVs.combine((theta.toSeq.zip(X) ++ tau.toSeq.zip(G))
           .filter(_._2 != null): _*)
-          .eagerPersist()
+          .persist(StorageLevel.MEMORY_AND_DISK, eager = eagerPersist)
       }
       k += 1
       dir

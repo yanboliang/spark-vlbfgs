@@ -19,15 +19,15 @@ package org.apache.spark.ml.optim
 
 import java.util.Random
 
-import breeze.linalg.{norm => Bnorm, DenseVector => BDV}
+import breeze.linalg.{DenseVector => BDV, norm => Bnorm}
 import breeze.optimize.{DiffFunction => BDF, LBFGS => BreezeLBFGS}
-
 import org.apache.spark.ml.linalg.Vectors
 import org.apache.spark.SparkFunSuite
 import org.apache.spark.ml.linalg.DistributedVector
 import org.apache.spark.ml.util.VUtils
 import org.apache.spark.ml.util.TestingUtils._
 import org.apache.spark.mllib.util.MLlibTestSparkContext
+import org.apache.spark.storage.StorageLevel
 
 class VectorFreeLBFGSSuite extends SparkFunSuite with MLlibTestSparkContext {
 
@@ -45,21 +45,23 @@ class VectorFreeLBFGSSuite extends SparkFunSuite with MLlibTestSparkContext {
     val lbfgs = new BreezeLBFGS[BDV[Double]](100, 4)
     val vf_lbfgs = new VectorFreeLBFGS(100, 10)
 
-    val initData: Array[Double] = Array.fill(10)(0.0).map(x => rangeRandDouble(-10D, 10D, rand))
+    val initData: Array[Double] = Array.fill(10)(0.0)
+      .map(x => rangeRandDouble(-10D, 10D, rand))
 
     val initBDV = new BDV(initData.clone())
 
     val initDisV = VUtils.splitArrIntoDV(sc, initData, 5, 2)
+      .persist(StorageLevel.MEMORY_AND_DISK, eager = true)
 
     val df = new BDF[BDV[Double]] {
       def calculate(x: BDV[Double]) = {
         (Bnorm((x - 3.0) :^ 2.0, 1), (x :* 2.0) :- 6.0)
       }
     }
-    val vf_df = new DVDiffFunction {
+    val vf_df = new VDiffFunction {
       def calculate(x: DistributedVector) = {
         val n = x.add(-3.0).norm
-        (n * n, x.scale(2.0).add(-6.0))
+        (n * n, x.scale(2.0).add(-6.0).persist(StorageLevel.MEMORY_AND_DISK, eager = true))
       }
     }
 
@@ -98,7 +100,7 @@ class VectorFreeLBFGSSuite extends SparkFunSuite with MLlibTestSparkContext {
 
     val initBDV = new BDV(initData.clone())
 
-    val initDisV = VUtils.splitArrIntoDV(sc, initData, partSize, partNum).eagerPersist()
+    val initDisV = VUtils.splitArrIntoDV(sc, initData, partSize, partNum).persist()
 
     def calc(x: BDV[Double]): (Double, BDV[Double]) = {
 
@@ -118,11 +120,11 @@ class VectorFreeLBFGSSuite extends SparkFunSuite with MLlibTestSparkContext {
     val df = new BDF[BDV[Double]] {
       def calculate(x: BDV[Double]) = calc(x)
     }
-    val vf_df = new DVDiffFunction {
+    val vf_df = new VDiffFunction {
       def calculate(x: DistributedVector) = {
         val r = calc(new BDV(x.toLocal.toArray))
         val rr = r._2.toArray
-        (r._1, VUtils.splitArrIntoDV(sc, rr, partSize, partNum).eagerPersist())
+        (r._1, VUtils.splitArrIntoDV(sc, rr, partSize, partNum).persist())
       }
     }
 
