@@ -22,7 +22,7 @@ import java.util.Random
 import breeze.linalg.{DenseVector => BDV}
 import org.apache.spark.SparkContext
 import org.apache.spark.ml.linalg.DistributedVector
-import org.apache.spark.ml.optim.{DVDiffFunction, VectorFreeLBFGS}
+import org.apache.spark.ml.optim.{VDiffFunction, VectorFreeLBFGS}
 import org.apache.spark.ml.util.VUtils
 import org.apache.spark.sql.SparkSession
 
@@ -37,19 +37,21 @@ object RosenbrockExample {
     bm: Int,
     maxIter: Int,
     dimension: Int,
-    partSize: Int): Unit = {
+    partSize: Int,
+    eagerPersist: Boolean,
+    stopOnEachIter: Boolean): Unit = {
 
     val rand = new Random(100)
 
     val partNum = VUtils.getNumBlocks(partSize, dimension)
     println(s"----------run bm=$bm, dimension=$dimension, maxIter=$maxIter, partNum=${partNum}---------")
 
-    val vf_lbfgs = new VectorFreeLBFGS(maxIter, bm)
+    val vf_lbfgs = new VectorFreeLBFGS(maxIter, bm, eagerPersist = eagerPersist)
 
     val initData: Array[Double] = Array.fill(dimension)(0.0)
       .map(x => rangeRandDouble(-10D, 10D, rand))
 
-    val initDisV = VUtils.splitArrIntoDV(sc, initData, partSize, partNum).eagerPersist()
+    val initDisV = VUtils.splitArrIntoDV(sc, initData, partSize, partNum).persist()
 
     def calc(x: BDV[Double]): (Double, BDV[Double]) = {
 
@@ -66,11 +68,13 @@ object RosenbrockExample {
       fx -> g
     }
 
-    val vf_df = new DVDiffFunction {
+    var dfcallCnt = 0
+    val vf_df = new VDiffFunction(eagerPersist) {
       def calculate(x: DistributedVector) = {
+        dfcallCnt += 1
         val r = calc(new BDV(x.toLocal.toArray))
         val rr = r._2.toArray
-        (r._1, VUtils.splitArrIntoDV(sc, rr, partSize, partNum).eagerPersist())
+        (r._1, VUtils.splitArrIntoDV(sc, rr, partSize, partNum).persist())
       }
     }
 
@@ -81,32 +85,69 @@ object RosenbrockExample {
     var iterCnt = 0
     while (vf_lbfgsIter.hasNext) {
       iterCnt += 1
-      System.out.print(s"press ENTER to start iter: ${iterCnt}")
-      System.out.flush()
-      System.in.read()
+      if (stopOnEachIter) {
+        System.out.print(s"press ENTER to start iter: ${iterCnt}")
+        System.out.flush()
+        System.in.read()
+      } else {
+        System.out.println(s"begin iter: ${iterCnt}")
+      }
+      val startTime = System.currentTimeMillis()
+      val startDFCallCnt = dfcallCnt
       vf_state = vf_lbfgsIter.next()
+      val endTime = System.currentTimeMillis()
+      val endDFCallCnt = dfcallCnt
+      System.out.println(s"iter: ${iterCnt} cost ${endTime - startTime}ms," +
+        s" df called ${endDFCallCnt - startDFCallCnt} times")
     }
     println("iteration finish.")
     println(s"result coeffs: ${vf_state.x.toLocal.toString}")
   }
 
   def main(args: Array[String]) = {
+
+    var bm: Int = 4
+    var maxIter: Int = 100
+    var dimension = 100
+    var partSize = 10
+    var eagerPersist = true
+    var stopOnEachIter = true
+    var openUI = true
+
+    try {
+      bm = args(0).toInt
+      maxIter = args(1).toInt
+      dimension = args(2).toInt
+      partSize = args(3).toInt
+      eagerPersist = args(4).toBoolean
+      stopOnEachIter = args(5).toBoolean
+      openUI = args(6).toBoolean
+    } catch {
+      case _: Throwable =>
+        println("Wrong params.")
+        println("Params: bm maxIter dimension partSize eagerPersist stopOnEachIter openUI")
+        System.exit(-1)
+    }
+
     val spark = SparkSession
       .builder()
       .appName("Rosenbrock Example")
-      .config("spark.ui.enabled", true)
+      .config("spark.ui.enabled", openUI)
       .config("spark.ui.port", 8899)
       .getOrCreate()
 
-    println("UI port: 8899")
+    if (openUI) println("UI port: 8899")
 
     val sc = spark.sparkContext
 
     runRosenbrock(sc,
-      bm = 4,
-      maxIter = 100,
-      dimension = 100,
-      partSize = 10)
+      bm = bm,
+      maxIter = maxIter,
+      dimension = dimension,
+      partSize = partSize,
+      eagerPersist = eagerPersist,
+      stopOnEachIter = stopOnEachIter
+    )
 
     sc.stop()
   }

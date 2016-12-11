@@ -32,7 +32,7 @@ object VLORRealDataExample {
 
     val sc = spark.sparkContext
 
-    var dataset1: Dataset[_] = spark.read.format("libsvm").load("data/a9a")
+    val dataset1: Dataset[_] = spark.read.format("libsvm").load("data/a9a")
 
     val trainer = new LogisticRegression()
       .setFitIntercept(false)

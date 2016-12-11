@@ -22,8 +22,8 @@ import breeze.linalg.{DenseVector => BDV}
 import org.apache.spark.internal.Logging
 import org.apache.spark.ml.feature.Instance
 import org.apache.spark.ml.linalg.{DistributedVector => DV, DistributedVectors => DVs, _}
-import org.apache.spark.ml.optim.{DVDiffFunction, VectorFreeLBFGS}
-import org.apache.spark.ml.param.{IntParam, ParamMap, ParamValidators}
+import org.apache.spark.ml.optim.{VDiffFunction, VectorFreeLBFGS}
+import org.apache.spark.ml.param.{BooleanParam, IntParam, ParamMap, ParamValidators}
 import org.apache.spark.ml.param.shared._
 import org.apache.spark.ml.util._
 import org.apache.spark.mllib.linalg.VectorImplicits._
@@ -36,7 +36,8 @@ import org.apache.spark.sql.{Dataset, Row}
 import org.apache.spark.sql.functions._
 import org.apache.spark.sql.types.DoubleType
 import org.apache.spark.storage.StorageLevel
-import org.apache.spark.util.DoubleAccumulator
+import org.apache.spark.storage.StorageLevel.MEMORY_AND_DISK
+import org.apache.spark.util.{DoubleAccumulator, RDDUtils}
 
 /**
  * Params for vector-free logistic regression.
@@ -46,18 +47,12 @@ private[classification] trait VLogisticRegressionParams
     with HasTol with HasStandardization with HasWeightCol with HasThreshold
     with HasFitIntercept
 
-object VLogisticRegression {
-  val storageLevel = StorageLevel.MEMORY_AND_DISK
-}
-
 /**
  * Logistic regression.
  */
 class VLogisticRegression(override val uid: String)
   extends ProbabilisticClassifier[Vector, VLogisticRegression, VLogisticRegressionModel]
     with VLogisticRegressionParams with Logging {
-
-  import VLogisticRegression._
 
   def this() = this(Identifiable.randomUID("vector-free-logreg"))
 
@@ -90,6 +85,13 @@ class VLogisticRegression(override val uid: String)
 
   def setColPartitions(value: Int): this.type = set(colPartitions, value)
 
+  // eagerPersit
+  val eagerPersist: BooleanParam = new BooleanParam(this, "eagerPersist",
+    "Whether to eager persist distributed vector.")
+  setDefault(eagerPersist -> true)
+
+  def setEagerPersist(value: Boolean): this.type = set(eagerPersist, true)
+
   def setRegParam(value: Double): this.type = set(regParam, value)
   setDefault(regParam -> 0.0)
 
@@ -108,6 +110,7 @@ class VLogisticRegression(override val uid: String)
   def setWeightCol(value: String): this.type = set(weightCol, value)
 
   override protected[spark] def train(dataset: Dataset[_]): VLogisticRegressionModel = {
+    println("begin training")
 
     val sc = dataset.sparkSession.sparkContext
     val w = if (!isDefined(weightCol) || $(weightCol).isEmpty) lit(1.0) else col($(weightCol))
@@ -124,6 +127,7 @@ class VLogisticRegression(override val uid: String)
     // Get number of blocks in column direction.
     val colBlocks: Int = VUtils.getNumBlocks(localColsPerBlock, numFeatures)
 
+    println("feature statistics")
     // 1. features statistics
     val featuresSummarizer: RDD[(Int, OptimMultivariateOnlineSummarizer)] = {
       val features = instances.flatMap {
@@ -141,22 +145,25 @@ class VLogisticRegression(override val uid: String)
       features.aggregateByKey(
         new OptimMultivariateOnlineSummarizer(OptimMultivariateOnlineSummarizer.varianceMask),
         new DistributedVectorPartitioner(colBlocks)
-      )(seqOp, comOp).persist(storageLevel)
+      )(seqOp, comOp).persist(StorageLevel.MEMORY_AND_DISK)
     }
 
+    println("generate feature std DV")
     // featuresStd is a distributed vector.
     val featuresStd: DV = VUtils.kvRDDToDV(
       featuresSummarizer.mapValues { summarizer =>
         Vectors.dense(summarizer.variance.toArray.map(math.sqrt))
-      }, localColsPerBlock, colBlocks, numFeatures).eagerPersist(storageLevel)
+      }, localColsPerBlock, colBlocks, numFeatures)
+      .persist(StorageLevel.MEMORY_AND_DISK, eager = $(eagerPersist))
 
     // println(s"dv feature std: ${featuresStd.toLocal().toString}")
 
     featuresSummarizer.unpersist()
 
+    println("begin compute label and weight")
     val labelAndWeightRDD: RDD[(Double, Double)] = instances.map { instance =>
       (instance.label, instance.weight)
-    }.persist(storageLevel)
+    }.persist(StorageLevel.MEMORY_AND_DISK)
 
     // 3. statistic each partition size.
 
@@ -177,12 +184,12 @@ class VLogisticRegression(override val uid: String)
           val labelArr = Array.tabulate(tupleArr.length)(idx => tupleArr(idx)._2)
           val weightArr = Array.tabulate(tupleArr.length)(idx => tupleArr(idx)._3)
           (labelArr, weightArr)
-        }.persist(storageLevel)
+        }.persist(StorageLevel.MEMORY_AND_DISK)
 
     val weightSum = labelAndWeight.map(_._2.sum).sum()
 
     // println(s"weightSum: ${weightSum}")
-
+    println("begin label summarizer.")
     val labelSummarizer = {
       val seqOp = (c: MultiClassSummarizer, instance: Instance)
         => c.add(instance.label, instance.weight)
@@ -190,7 +197,7 @@ class VLogisticRegression(override val uid: String)
       val combOp = (c1: MultiClassSummarizer, c2: MultiClassSummarizer)
         => c1.merge(c2)
 
-      instances.treeAggregate(new MultiClassSummarizer)(seqOp, combOp, 2)
+      instances.aggregate(new MultiClassSummarizer)(seqOp, combOp)
     }
 
     val histogram = labelSummarizer.histogram
@@ -208,6 +215,7 @@ class VLogisticRegression(override val uid: String)
       colBlocks / localColPartitions
     )
 
+    println("begin pack features to matrix")
     // 5. pack features into blcok matrix
     val rawFeatures: RDD[((Int, Int), SparseMatrix)] =
       VUtils.zipRDDWithIndex(partitionSizes, instances)
@@ -238,7 +246,7 @@ class VLogisticRegression(override val uid: String)
             }
           }
           SparseMatrix.fromCOO(sm.numCols, sm.numRows, arrBuf).transpose
-        }).persist(storageLevel)
+        }).persist(StorageLevel.MEMORY_AND_DISK)
 
     val localFitIntercept = $(fitIntercept)
     val costFun = new VBinomialLogisticCostFun(
@@ -255,7 +263,8 @@ class VLogisticRegression(override val uid: String)
       $(standardization),
       featuresStd,
       $(regParam),
-      localFitIntercept)
+      localFitIntercept,
+      $(eagerPersist))
 
     val optimizer = new VectorFreeLBFGS($(maxIter), 10, $(tol))
 
@@ -280,16 +289,19 @@ class VLogisticRegression(override val uid: String)
     } else {
       DVs.zeros(
         sc, localColsPerBlock, colBlocks, numFeatures)
-    }.eagerPersist()
+    }
+    initCoeffs.persist(StorageLevel.MEMORY_AND_DISK, eager = $(eagerPersist))
 
     val states = optimizer.iterations(costFun, initCoeffs)
 
     var state: optimizer.State = null
-    // var iterCnt = 0
+    var iterCnt = 0
     while (states.hasNext) {
-      // iterCnt += 1
-      // println(s"LBFGS iter $iterCnt")
+      iterCnt += 1
+      val startTime = System.currentTimeMillis()
       state = states.next()
+      val endTime = System.currentTimeMillis()
+      println(s"VF-LBFGS iter ${iterCnt} finish, cost ${endTime - startTime}ms.")
     }
     if (state == null) {
       val msg = s"${optimizer.getClass.getName} failed."
@@ -323,7 +335,9 @@ class VLogisticRegression(override val uid: String)
           }
         }
         Vectors.dense(res)
-    }.eagerPersist()
+    }.persist(StorageLevel.MEMORY_AND_DISK, eager = true)
+
+    // here must eager persist the RDD, because we need the interceptValAccu value now.
     val interceptVal = interceptValAccu.value
     val model = copyValues(new VLogisticRegressionModel(uid, coeffs, interceptVal))
     model
@@ -346,9 +360,8 @@ private[ml] class VBinomialLogisticCostFun(
     _standardization: Boolean,
     _featuresStd: DV,
     _regParamL2: Double,
-    _fitIntercept: Boolean) extends DVDiffFunction {
-
-  import VLogisticRegression._
+    _fitIntercept: Boolean,
+    eagerPersist: Boolean) extends VDiffFunction(eagerPersist) {
 
   // Calculates both the value and the gradient at a point
   override def calculate(coeffs: DV): (Double, DV) = {
@@ -368,7 +381,12 @@ private[ml] class VBinomialLogisticCostFun(
     val regParamL2: Double = _regParamL2
     val fitIntercept = _fitIntercept
 
-    val lossAccu: DoubleAccumulator = features.sparkContext.doubleAccumulator
+    val lossAccu = features.sparkContext.doubleAccumulator
+
+    assert(RDDUtils.isRDDPersisted(features))
+    assert(coeffs.isPersisted)
+    assert(RDDUtils.isRDDPersisted(labelAndWeight))
+
     val multipliers: RDD[Vector] = VUtils.blockMatrixHorzZipVec(
       features, coeffs, gridPartitioner,
       (blockCoords: (Int, Int), matrix: SparseMatrix, partCoeffs: Vector) => {
@@ -411,8 +429,9 @@ private[ml] class VBinomialLogisticCostFun(
           Vectors.dense(multiplierArr)
       }
 
+    // here must eager persist the RDD, because we need the lossAccu value now.
     val multipliersDV: DV = new DV(multipliers, rowsPerBlock, rowBlocks, numInstances)
-      .eagerPersist(storageLevel)
+      .persist(StorageLevel.MEMORY_AND_DISK, eager = true)
 
     val lossSum = lossAccu.value / weightSum
 
@@ -448,9 +467,11 @@ private[ml] class VBinomialLogisticCostFun(
 
     val gradDV: DV = new DV(grad, colsPerBlock, colBlocks,
       if (fitIntercept) numFeatures + 1 else numFeatures
-    ).eagerPersist(storageLevel)
+    ).persist(StorageLevel.MEMORY_AND_DISK, eager = eagerPersist)
 
     // println(s"gradDV: ${gradDV.toLocal.toString}")
+
+    assert(featuresStd.isPersisted)
 
     // compute regularization for grad & objective value
     val lossRegAccu = gradDV.vecs.sparkContext.doubleAccumulator
@@ -496,7 +517,8 @@ private[ml] class VBinomialLogisticCostFun(
       }
     }
 
-    gradDVWithReg.eagerPersist(storageLevel)
+    // here must eager persist the RDD, because we need the lossRegAccu value now.
+    gradDVWithReg.persist(StorageLevel.MEMORY_AND_DISK, eager = true)
 
     // println(s"gradDVWithReg: ${gradDVWithReg.toLocal.toString}")
 

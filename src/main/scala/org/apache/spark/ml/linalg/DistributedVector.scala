@@ -20,6 +20,7 @@ package org.apache.spark.ml.linalg
 import org.apache.spark.{Partitioner, SparkContext}
 import org.apache.spark.rdd.RDD
 import org.apache.spark.storage.StorageLevel
+import org.apache.spark.util.RDDUtils
 
 class DistributedVector(
     val vecs: RDD[Vector],
@@ -28,8 +29,6 @@ class DistributedVector(
     val nSize: Long) {
 
   require(nParts > 0 && sizePerPart > 0 && nSize > 0 && (nParts - 1) * sizePerPart < nSize)
-
-  var isPersisted = false
 
   def add(d: Double): DistributedVector = {
     val vecs2 = vecs.map((vec: Vector) => {
@@ -78,16 +77,18 @@ class DistributedVector(
   def norm(): Double = {
     math.sqrt(vecs.map(Vectors.norm(_, 2)).map(x => x * x).sum())
   }
-  def eagerPersist(storageLevel: StorageLevel = StorageLevel.MEMORY_AND_DISK): DistributedVector = {
+  def persist(storageLevel: StorageLevel = StorageLevel.MEMORY_AND_DISK,
+              eager: Boolean = true)
+    : DistributedVector = {
     vecs.persist(storageLevel)
-    vecs.count() // force eager cache.
-    isPersisted = true
+    if (eager) {
+      vecs.count() // force eager cache.
+    }
     this
   }
 
   def unpersist(): DistributedVector = {
     vecs.unpersist()
-    isPersisted = false
     this
   }
 
@@ -157,6 +158,10 @@ class DistributedVector(
     val v = Array.concat(vecs.zipWithIndex().collect().sortWith(_._2 < _._2).map(_._1.toArray): _*)
     Vectors.dense(v)
   }
+
+  def isPersisted: Boolean = {
+    RDDUtils.isRDDPersisted(vecs)
+  }
 }
 
 private[spark] class DistributedVectorPartitioner(val nParts: Int) extends Partitioner {
@@ -197,7 +202,7 @@ object DistributedVectors {
     val lastPartSize = (nSize - sizePerPart * (nParts - 1)).toInt
     val vecs = sc.parallelize(Array.tabulate(nParts)(x => (x, x)).toSeq, nParts)
       .mapPartitions{iter => {
-        Thread.sleep(1000) // add this sleep time will help spread the task into different node.
+        Thread.sleep(2000) // add this sleep time will help spread the task into different node.
         iter
       }}
       .partitionBy(new DistributedVectorPartitioner(nParts))

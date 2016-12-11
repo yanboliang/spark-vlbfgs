@@ -48,9 +48,9 @@ class DistributedVectorSuite extends SparkFunSuite with MLlibTestSparkContext {
     val partSize = 3
     val partNum = VUtils.getNumBlocks(partSize, V1Array.length)
 
-    DV1 = VUtils.splitArrIntoDV(sc, V1Array, partSize, partNum).eagerPersist()
-    DV2 = VUtils.splitArrIntoDV(sc, V2Array, partSize, partNum).eagerPersist()
-    DV3 = VUtils.splitArrIntoDV(sc, V3Array, partSize, partNum).eagerPersist()
+    DV1 = VUtils.splitArrIntoDV(sc, V1Array, partSize, partNum).persist()
+    DV2 = VUtils.splitArrIntoDV(sc, V2Array, partSize, partNum).persist()
+    DV3 = VUtils.splitArrIntoDV(sc, V3Array, partSize, partNum).persist()
   }
 
   test("toLocal") {
@@ -59,19 +59,19 @@ class DistributedVectorSuite extends SparkFunSuite with MLlibTestSparkContext {
   }
 
   test("add") {
-    val local1 = DV1.add(2.0).eagerPersist().toLocal
-    val local2 = DV1.add(DV2).eagerPersist().toLocal
+    val local1 = DV1.add(2.0).persist().toLocal
+    val local2 = DV1.add(DV2).persist().toLocal
     assert(local1 ~== Vectors.fromBreeze(BV1 + 2.0) relTol 1e-8)
     assert(local2 ~== Vectors.fromBreeze(BV1 + BV2) relTol 1e-8)
   }
 
   test("scale") {
-    val local1 = DV1.scale(2.0).eagerPersist().toLocal
+    val local1 = DV1.scale(2.0).persist().toLocal
     assert(local1 ~== Vectors.fromBreeze(BV1 * 2.0) relTol 1e-8)
   }
 
   test("addScalVec") {
-    val res = DV1.addScalVec(3.0, DV2).eagerPersist().toLocal
+    val res = DV1.addScalVec(3.0, DV2).persist().toLocal
     assert(res ~== Vectors.fromBreeze(BV1 + (BV2 * 3.0)) relTol 1e-8)
   }
 
@@ -90,7 +90,7 @@ class DistributedVectorSuite extends SparkFunSuite with MLlibTestSparkContext {
   test("combine") {
     val combineVecLocal = DistributedVectors.combine(
       (10.0, DV1), (100.0, DV2), (18.0, DV3)
-    ).eagerPersist().toLocal
+    ).persist().toLocal
     val bCombineVec = (BV1 * 10.0) + (BV2 * 100.0) + (BV3 * 18.0)
     assert(combineVecLocal ~== Vectors.fromBreeze(bCombineVec) relTol 1e-8)
   }
