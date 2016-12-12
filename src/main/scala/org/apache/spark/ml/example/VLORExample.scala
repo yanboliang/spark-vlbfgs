@@ -94,7 +94,8 @@ object VLORExample {
 
       val vmodel = vtrainer.fit(dataset1)
 
-      println(s"VLogistic regression coefficients: ${vmodel.coefficients.toLocal}")
+      println(s"VLogistic regression coefficients first partition:" +
+        s" ${vmodel.coefficients.vecs.first()}")
     } finally {
       println("Press ENTER to exit.")
       System.in.read()

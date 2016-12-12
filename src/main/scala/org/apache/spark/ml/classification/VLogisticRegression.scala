@@ -90,7 +90,14 @@ class VLogisticRegression(override val uid: String)
     "Whether to eager persist distributed vector.")
   setDefault(eagerPersist -> true)
 
-  def setEagerPersist(value: Boolean): this.type = set(eagerPersist, true)
+  def setEagerPersist(value: Boolean): this.type = set(eagerPersist, value)
+
+  // LBFGS Corrections number
+  val numLBFGSCorrections: IntParam = new IntParam(this, "numLBFGSCorrections",
+    "number of LBFGS Corrections")
+  setDefault(numLBFGSCorrections -> 10)
+
+  def setNumLBFGSCorrections(value: Int): this.type  = set(numLBFGSCorrections, value)
 
   def setRegParam(value: Double): this.type = set(regParam, value)
   setDefault(regParam -> 0.0)
@@ -266,7 +273,12 @@ class VLogisticRegression(override val uid: String)
       localFitIntercept,
       $(eagerPersist))
 
-    val optimizer = new VectorFreeLBFGS($(maxIter), 10, $(tol))
+    val optimizer = new VectorFreeLBFGS(
+      maxIter = $(maxIter),
+      m = $(numLBFGSCorrections),
+      tolerance = $(tol),
+      eagerPersist = $(eagerPersist)
+    )
 
     val initCoeffs: DV = if (localFitIntercept) {
       /*
@@ -519,6 +531,10 @@ private[ml] class VBinomialLogisticCostFun(
 
     // here must eager persist the RDD, because we need the lossRegAccu value now.
     gradDVWithReg.persist(StorageLevel.MEMORY_AND_DISK, eager = true)
+
+    // because gradDVWithReg already eagerly persisted, now we can release multipliersDV & gradDV
+    multipliersDV.unpersist()
+    gradDV.unpersist()
 
     // println(s"gradDVWithReg: ${gradDVWithReg.toLocal.toString}")
 
