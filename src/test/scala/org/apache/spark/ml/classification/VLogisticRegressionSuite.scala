@@ -110,6 +110,7 @@ class VLogisticRegressionSuite extends SparkFunSuite with MLlibTestSparkContext 
       .setWeightCol("weight")
       .setRegParam(0.0)
       .setStandardization(true)
+      .setEagerPersist(false)
     val vmodel = vtrainer.fit(testData1)
 
     val trainer = new LogisticRegression()
@@ -132,6 +133,7 @@ class VLogisticRegressionSuite extends SparkFunSuite with MLlibTestSparkContext 
       .setRowsPerBlock(3)
       .setRegParam(0.0)
       .setStandardization(true)
+      .setEagerPersist(false)
     val vmodel = vtrainer.fit(testData1)
 
     val trainer = new LogisticRegression()
@@ -156,6 +158,7 @@ class VLogisticRegressionSuite extends SparkFunSuite with MLlibTestSparkContext 
       .setWeightCol("weight")
       .setRegParam(0.8)
       .setStandardization(true)
+      .setEagerPersist(false)
     val vmodel = vtrainer.fit(testData1)
 
     val trainer = new LogisticRegression()
@@ -179,6 +182,7 @@ class VLogisticRegressionSuite extends SparkFunSuite with MLlibTestSparkContext 
       .setWeightCol("weight")
       .setRegParam(0.8)
       .setStandardization(false)
+      .setEagerPersist(false)
     val vmodel = vtrainer.fit(testData1)
 
     val trainer = new LogisticRegression()
@@ -202,6 +206,7 @@ class VLogisticRegressionSuite extends SparkFunSuite with MLlibTestSparkContext 
       .setWeightCol("weight")
       .setRegParam(0.0)
       .setStandardization(true)
+      .setEagerPersist(false)
     val vmodel = vtrainer.fit(testData1WithIntecept)
 
     val trainer = new LogisticRegression()
@@ -227,6 +232,7 @@ class VLogisticRegressionSuite extends SparkFunSuite with MLlibTestSparkContext 
       .setRowsPerBlock(3)
       .setRegParam(0.0)
       .setStandardization(true)
+      .setEagerPersist(false)
     val vmodel = vtrainer.fit(testData1WithIntecept)
 
     val trainer = new LogisticRegression()
@@ -254,6 +260,7 @@ class VLogisticRegressionSuite extends SparkFunSuite with MLlibTestSparkContext 
       .setWeightCol("weight")
       .setRegParam(0.8)
       .setStandardization(true)
+      .setEagerPersist(false)
     val vmodel = vtrainer.fit(testData1WithIntecept)
 
     val trainer = new LogisticRegression()
@@ -280,6 +287,7 @@ class VLogisticRegressionSuite extends SparkFunSuite with MLlibTestSparkContext 
       .setWeightCol("weight")
       .setRegParam(0.8)
       .setStandardization(false)
+      .setEagerPersist(false)
     val vmodel = vtrainer.fit(testData1WithIntecept)
 
     val trainer = new LogisticRegression()
