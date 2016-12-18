@@ -136,10 +136,12 @@ class VectorFreeLBFGSSuite extends SparkFunSuite with MLlibTestSparkContext {
 
     while (lbfgsIter.hasNext) {
       state = lbfgsIter.next()
+      println(s"br_x${state.iter}: ${state.x}")
     }
 
     while (vf_lbfgsIter.hasNext) {
       vf_state = vf_lbfgsIter.next()
+      println(s"vf_x${vf_state.iter}: ${vf_state.x.toLocal}")
     }
 
     assert(vf_state.x.toLocal ~== Vectors.fromBreeze(state.x) relTol 0.1)
