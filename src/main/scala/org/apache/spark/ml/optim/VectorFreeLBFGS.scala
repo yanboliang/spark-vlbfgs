@@ -27,7 +27,8 @@ class VectorFreeLBFGS(
     maxIter: Int = -1,
     m: Int = 7,
     tolerance: Double = 1E-9,
-    eagerPersist: Boolean = true) extends Logging {
+    eagerPersist: Boolean = true,
+    useNewHistoryClass: Boolean = true) extends Logging {
 
   import VectorFreeLBFGS._
   require(m > 0)
@@ -36,11 +37,12 @@ class VectorFreeLBFGS(
   val relativeTolerance: Boolean = true
 
   type State = VectorFreeLBFGS.State
+  type History = VectorFreeLBFGS.History
 
   protected def determineStepSize(
-                                   state: State,
-                                   fn: VDiffFunction,
-                                   direction: DV): Double = {
+      state: State,
+      fn: VDiffFunction,
+      direction: DV): Double = {
     // using strong wolfe line search
     val x = state.x
     val grad = state.grad
@@ -60,7 +62,7 @@ class VectorFreeLBFGS(
     alpha
   }
 
-  protected def takeStep(state: State, dir: DV, stepSize: Double): DV = {
+  protected def takeStep(state: this.State, dir: DV, stepSize: Double): DV = {
     state.x.addScalVec(stepSize, dir)
       .persist(StorageLevel.MEMORY_AND_DISK, eager = eagerPersist)
   }
@@ -95,15 +97,24 @@ class VectorFreeLBFGS(
       IndexedSeq(Double.PositiveInfinity), NotConvergedFlag)
   }
 
+  // VectorFreeOWLQN will override this method
+  def chooseDescentDirection(history: this.History, state: this.State): DV = {
+    val dir = history.computeDirection(state.x, state.grad, state.adjustedGradient)
+    dir.persist(StorageLevel.MEMORY_AND_DISK, eager = eagerPersist)
+  }
+
   // the `fn` is responsible for output `grad` persist.
   // the `init` must be persisted before this interface called.
   def iterations(fn: VDiffFunction, init: DV): Iterator[State] = {
-    val history = new History(m, eagerPersist)
+    val history: History =
+      if (useNewHistoryClass) new History2(m, eagerPersist)
+      else new History1(m, eagerPersist)
+
     val state0 = initialState(fn, init)
 
     val infiniteIterations = Iterator.iterate(state0) { state =>
       try {
-        val dir = history.computeDirection(state.x, state.adjustedGradient)
+        val dir = chooseDescentDirection(history, state)
         assert(dir.isPersisted)
         val stepSize = determineStepSize(state, fn, dir)
 
@@ -114,6 +125,12 @@ class VectorFreeLBFGS(
         dir.unpersist()
         val (adjValue, adjGrad) = adjust(x, grad, value)
         assert(adjGrad.isPersisted)
+
+        // in order to save memory, release ununsed adjGrad DV
+        if (state.adjustedGradient != state.grad) {
+          state.adjustedGradient.unpersist()
+        }
+        state.adjustedGradient = null
 
         val newState = State(x, value, grad, adjValue, adjGrad, state.iter + 1,
           state.initialAdjVal, (state.fValHistory :+ value).takeRight(fvalMemory),
@@ -241,20 +258,30 @@ object VectorFreeLBFGS {
       value: Double,
       grad: DV,
       adjustedValue: Double,
-      adjustedGradient: DV,
+      var adjustedGradient: DV,
       iter: Int,
       initialAdjVal: Double,
       fValHistory: IndexedSeq[Double],
       var convergenceFlag: Int) {
   }
 
-  case class History(m: Int, eagerPersist: Boolean) {
+  trait History {
+    def dispose()
+    def computeDirection(newX: DV, newGrad: DV, newAdjGrad: DV): DV
+  }
+
+  /**
+   * Old version History implementation, may cause numeric stability problem.
+   */
+  case class History1(m: Int, eagerPersist: Boolean) extends History {
     require(m > 0)
 
     private var k = 0
     private val m1 = m + 1
+
     private val X: Array[DV] = new Array[DV](m1)
     private val G: Array[DV] = new Array[DV](m1)
+
     private val XXdot: Array[Array[Double]] = Array.ofDim[Double](m1, m1)
     private val GGdot: Array[Array[Double]] = Array.ofDim[Double](m1, m1)
     private val XGdot: Array[Array[Double]] = Array.ofDim[Double](m1, m1)
@@ -273,34 +300,23 @@ object VectorFreeLBFGS {
     }
 
     private def shift(vv: Array[DV], v: DV): Unit = {
+      val end = vv.length - 1
       if (vv(0) != null) vv(0).unpersist()
-      for (i <- 0 until m) {
+      for (i <- 0 until end) {
         vv(i) = vv(i + 1)
       }
-      vv(m) = v
+      vv(end) = v
       // v.persist() do not need persist here because `v` has already persisted.
     }
 
     private def shift(VV: Array[Array[Double]]): Unit = {
-      for (i <- 0 until m; j <- 0 until m) {
+      val end = VV.length - 1
+      for (i <- 0 until end; j <- 0 until end) {
         VV(i)(j) = VV(i + 1)(j + 1)
       }
     }
 
-    private def updateDotProduct(task: (String, Int, Int)): Unit = task match {
-      case ("XX", i, j) =>
-        val d = X(i).dot(X(j))
-        XXdot(i)(j) = d
-        XXdot(j)(i) = d
-      case ("XG", i, j) =>
-        XGdot(i)(j) = X(i).dot(G(j))
-      case ("GG", i, j) =>
-        val d = G(i).dot(G(j))
-        GGdot(i)(j) = d
-        GGdot(j)(i) = d
-    }
-
-    def computeDirection(newX: DV, newGrad: DV): DV = {
+    def computeDirection(newX: DV, newGrad: DV, newAdjGrad: DV): DV = {
       // shift in new X & grad, oldest ones shift out
       shift(X, newX)
       shift(G, newGrad)
@@ -311,7 +327,7 @@ object VectorFreeLBFGS {
       shift(XGdot)
 
       for (i <- 0 until m1) {
-        if (X(i) != null ) {
+        if (X(i) != null) {
           assert(X(i).isPersisted)
         }
         if (G(i) != null) {
@@ -319,61 +335,345 @@ object VectorFreeLBFGS {
         }
       }
 
+      val hasAdjGrad = (newGrad != newAdjGrad)
+      if (hasAdjGrad) {
+        assert(newAdjGrad.isPersisted)
+      }
+      val XAdjGdot: Array[Double] = new Array[Double](m1)
+      val GAdjGdot: Array[Double] = new Array[Double](m1)
+
       val start = math.max(m - k, 0)
-      val taskList =
+      var taskList =
         (start to m).map(i => ("XX", i, m)) ++
           (start to m).map(i => ("XG", i, m)) ++
           (start until m).map(i => ("XG", m, i)) ++
           (start to m).map(i => ("GG", i, m))
+
+      if (hasAdjGrad) {
+        taskList = taskList ++
+          (start to m).map(i => ("XAG", i, 0)) ++
+          (start to m).map(i => ("GAG", i, 0))
+      }
+
       val parTaskList = taskList.par
       parTaskList.tasksupport = new scala.collection.parallel.ForkJoinTaskSupport(LBFGS_threadPool)
-      parTaskList.foreach(updateDotProduct)
+      parTaskList.foreach(task => task match {
+        case ("XX", i, j) =>
+          val d = X(i).dot(X(j))
+          XXdot(i)(j) = d
+          XXdot(j)(i) = d
+        case ("XG", i, j) =>
+          XGdot(i)(j) = X(i).dot(G(j))
+        case ("GG", i, j) =>
+          val d = G(i).dot(G(j))
+          GGdot(i)(j) = d
+          GGdot(j)(i) = d
+        case ("XAG", i, _) =>
+          XAdjGdot(i) = X(i).dot(newAdjGrad)
+        case ("GAG", i, _) =>
+          GAdjGdot(i) = G(i).dot(newAdjGrad)
+      })
 
       var dir: DV = null
       // compute direction, Vector-free two loop recursion, generate coefficients theta & tau
-      dir = if (k == 0) {
-        G(m).scale(-1).persist(StorageLevel.MEMORY_AND_DISK, eager = eagerPersist)
-      } else {
-        val theta = Array.fill(m1)(0.0)
-        val tau = Array.fill(m1)(0.0)
+      dir = if (!hasAdjGrad) {
+        if (k == 0) {
+          G(m).scale(-1)
+        } else {
+          val theta = Array.fill(m1)(0.0)
+          val tau = Array.fill(m1)(0.0)
 
-        tau(m) = -1.0
-        val alpha = new Array[Double](m)
-        for (i <- (m - 1) to start by (-1)) {
-          val i1 = i + 1
-          var sum = 0.0
-          for (j <- 0 to m) {
-            sum += (XXdot(i1)(j) - XXdot(i)(j)) * theta(j) + (XGdot(i1)(j) - XGdot(i)(j)) * tau(j)
+          tau(m) = -1.0
+          val alpha = new Array[Double](m)
+
+          // for debug
+          // val thetaRaw = Array.fill(m)(0.0)
+          // val tauRaw = Array.fill(m)(0.0)
+
+          for (i <- (m - 1) to start by (-1)) {
+            val i1 = i + 1
+            var sum = 0.0
+            for (j <- 0 to m) {
+              sum +=
+                (XXdot(i1)(j) - XXdot(i)(j)) * theta(j) + (XGdot(i1)(j) - XGdot(i)(j)) * tau(j)
+            }
+            val a = sum / (XGdot(i1)(i1) - XGdot(i1)(i) - XGdot(i)(i1) + XGdot(i)(i))
+            assert(!a.isNaN)
+            alpha(i) = a
+            tau(i + 1) -= a
+            tau(i) += a
+
+            // tauRaw(i) -= a // for debug
           }
-          val a = sum / (XGdot(i1)(i1) - XGdot(i1)(i) - XGdot(i)(i1) + XGdot(i)(i))
+          // println(s"alpha: ${alpha.mkString(",")}")
+          // println(s"tauRaw: ${tauRaw.mkString(",")}")
+
+          val mm1 = m - 1
+          val scale = (XGdot(m)(m) - XGdot(m)(mm1) - XGdot(mm1)(m) + XGdot(mm1)(mm1)) /
+            (GGdot(m)(m) - 2.0 * GGdot(m)(mm1) + GGdot(mm1)(mm1))
+
+          // println(s"scale: ${scale}")
+
+          for (i <- 0 to m) {
+            theta(i) *= scale
+            tau(i) *= scale
+          }
+          for (i <- start until m) {
+            val i1 = i + 1
+            var sum = 0.0
+            for (j <- 0 to m) {
+              sum +=
+                (XGdot(j)(i1) - XGdot(j)(i)) * theta(j) + (GGdot(i1)(j) - GGdot(i)(j)) * tau(j)
+            }
+            val b = alpha(i) - sum / (XGdot(i1)(i1) - XGdot(i1)(i) - XGdot(i)(i1) + XGdot(i)(i))
+            assert(!b.isNaN)
+            theta(i + 1) += b
+            theta(i) -= b
+
+            // thetaRaw(i) += b // for debug
+          }
+          // println(s"theta: ${thetaRaw.mkString(",")}")
+          DVs.combine((theta.toSeq.zip(X) ++ tau.toSeq.zip(G))
+            .filter(_._2 != null): _*)
+        }
+      } else {
+        // used in adjusting grad case, such as OWLQN
+        println("VF-OWLQN compute direction")
+        if (k == 0) {
+          newAdjGrad.scale(-1)
+        } else {
+          val theta = Array.fill(m1)(0.0)
+          val tau = Array.fill(m1)(0.0)
+          var tauAdjGrad = -1.0
+
+          val alpha = new Array[Double](m)
+          for (i <- (m - 1) to start by (-1)) {
+            val i1 = i + 1
+            var sum = 0.0
+            for (j <- 0 to m) {
+              sum +=
+                (XXdot(i1)(j) - XXdot(i)(j)) * theta(j) + (XGdot(i1)(j) - XGdot(i)(j)) * tau(j)
+            }
+            sum += (XAdjGdot(i1) - XAdjGdot(i)) * tauAdjGrad
+            val a = sum / (XGdot(i1)(i1) - XGdot(i1)(i) - XGdot(i)(i1) + XGdot(i)(i))
+            assert(!a.isNaN)
+            alpha(i) = a
+            tau(i + 1) -= a
+            tau(i) += a
+          }
+
+          val mm1 = m - 1
+          val scale = (XGdot(m)(m) - XGdot(m)(mm1) - XGdot(mm1)(m) + XGdot(mm1)(mm1)) /
+            (GGdot(m)(m) - 2.0 * GGdot(m)(mm1) + GGdot(mm1)(mm1))
+          for (i <- 0 to m) {
+            theta(i) *= scale
+            tau(i) *= scale
+          }
+          tauAdjGrad *= scale
+          for (i <- start until m) {
+            val i1 = i + 1
+            var sum = 0.0
+            for (j <- 0 to m) {
+              sum +=
+                (XGdot(j)(i1) - XGdot(j)(i)) * theta(j) + (GGdot(i1)(j) - GGdot(i)(j)) * tau(j)
+            }
+            sum += (GAdjGdot(i1) - GAdjGdot(i)) * tauAdjGrad
+            val b = alpha(i) - sum / (XGdot(i1)(i1) - XGdot(i1)(i) - XGdot(i)(i1) + XGdot(i)(i))
+            assert(!b.isNaN)
+            theta(i + 1) += b
+            theta(i) -= b
+          }
+
+          DVs.combine(
+            (theta.toSeq.zip(X) ++ tau.toSeq.zip(G) ++ Seq((tauAdjGrad, newAdjGrad)))
+            .filter(_._2 != null): _*)
+        }
+      }
+      k += 1
+      dir
+    }
+  }
+
+  case class History2(m: Int, eagerPersist: Boolean) extends History{
+    require(m > 0)
+
+    private var k = 0
+
+    private val S: Array[DV] = new Array[DV](m)
+    private val Y: Array[DV] = new Array[DV](m)
+
+    private val SSdot: Array[Array[Double]] = Array.ofDim[Double](m, m)
+    private val YYdot: Array[Array[Double]] = Array.ofDim[Double](m, m)
+    private val SYdot: Array[Array[Double]] = Array.ofDim[Double](m, m)
+
+    private var lastX: DV = null
+    private var lastGrad: DV = null
+
+    def dispose = {
+      for (i <- 0 until m) {
+        if (S(i) != null) {
+          S(i).unpersist()
+          S(i) = null
+        }
+        if (Y(i) != null) {
+          Y(i).unpersist()
+          Y(i) = null
+        }
+      }
+      if (lastX != null) {
+        lastX.unpersist()
+        lastX = null
+      }
+      if (lastGrad != null) {
+        lastGrad.unpersist()
+        lastGrad = null
+      }
+    }
+
+    private def push(vv: Array[DV], v: DV): Unit = {
+      val end = vv.length - 1
+      if (vv(0) != null) vv(0).unpersist()
+      for (i <- 0 until end) {
+        vv(i) = vv(i + 1)
+      }
+      vv(end) = v
+      // v.persist() do not need persist here because `v` has already persisted.
+    }
+
+    private def shift(VV: Array[Array[Double]]): Unit = {
+      val end = VV.length - 1
+      for (i <- 0 until end; j <- 0 until end) {
+        VV(i)(j) = VV(i + 1)(j + 1)
+      }
+    }
+
+    // In LBFGS newAdjGrad == newGrad, but in OWLQN, newAdjGrad contains L1 pseudo-gradient
+    // Note: The approximate Hessian computed in LBFGS must use `grad` without L1 pseudo-gradient
+    def computeDirection(newX: DV, newGrad: DV, newAdjGrad: DV): DV = {
+      val dir = if (k == 0) {
+        lastX = newX
+        lastGrad = newGrad
+        newAdjGrad.scale(-1)
+      } else {
+        val newSYTaskList = Array("S", "Y").par
+        newSYTaskList.tasksupport
+          = new scala.collection.parallel.ForkJoinTaskSupport(LBFGS_threadPool)
+
+        var newS: DV = null
+        var newY: DV = null
+        newSYTaskList.foreach(task => task match {
+          case "S" =>
+            newS = newX.sub(lastX).persist(StorageLevel.MEMORY_AND_DISK, eager = eagerPersist)
+          case "Y" =>
+            newY = newGrad.sub(lastGrad).persist(StorageLevel.MEMORY_AND_DISK, eager = eagerPersist)
+        })
+
+        // now we can release `lastX` and `lastGrad`
+        lastX.unpersist()
+        lastGrad.unpersist()
+
+        lastX = newX
+        lastGrad = newGrad
+
+        // push `newS` and `newY` into LBFGS S & Y vector history.
+        push(S, newS)
+        push(Y, newY)
+
+        // calculate dot products between all `S` and `Y` vectors
+        shift(SSdot)
+        shift(SYdot)
+        shift(YYdot)
+
+        val SGdot: Array[Double] = new Array[Double](m)
+        val YGdot: Array[Double] = new Array[Double](m)
+
+        val start = math.max(m - k, 0)
+        val mm1 = m - 1
+        val dotProductTaskList = (
+          (start to mm1).map(i => ("SS", i, mm1)) ++
+          (start to mm1).map(i => ("SY", i, mm1)) ++
+          (start until mm1).map(i => ("SY", mm1, i)) ++
+          (start to mm1).map(i => ("YY", i, mm1)) ++
+          (start to mm1).map(i => ("SG", i, 0)) ++
+          (start to mm1).map(i => ("YG", i, 0))
+        ).par
+
+        dotProductTaskList.tasksupport
+          = new scala.collection.parallel.ForkJoinTaskSupport(LBFGS_threadPool)
+        dotProductTaskList.foreach(task => task match {
+          case ("SS", i, j) =>
+            val d = S(i).dot(S(j))
+            SSdot(i)(j) = d
+            SSdot(j)(i) = d
+          case ("SY", i, j) =>
+            SYdot(i)(j) = S(i).dot(Y(j))
+          case ("YY", i, j) =>
+            val d = Y(i).dot(Y(j))
+            YYdot(i)(j) = d
+            YYdot(j)(i) = d
+          case ("SG", i, _) =>
+            SGdot(i) = S(i).dot(newAdjGrad)
+          case ("YG", i, _) =>
+            YGdot(i) = Y(i).dot(newAdjGrad)
+        })
+
+        val theta = Array.fill(m)(0.0)
+        val tau = Array.fill(m)(0.0)
+        var tauAdjGrad = -1.0
+
+        val alpha = new Array[Double](m)
+        for (i <- mm1 to start by (-1)) {
+          var sum = 0.0
+          for (j <- 0 until m) {
+            sum +=
+              (SSdot(i)(j) * theta(j) + SYdot(i)(j) * tau(j))
+          }
+          sum += SGdot(i) * tauAdjGrad
+          val a = sum / SYdot(i)(i)
           assert(!a.isNaN)
           alpha(i) = a
-          tau(i + 1) -= a
-          tau(i) += a
+          tau(i) -= a
         }
 
-        val mm1 = m - 1
-        val scale = (XGdot(m)(m) - XGdot(m)(mm1) - XGdot(mm1)(m) + XGdot(mm1)(mm1)) /
-          (GGdot(m)(m) - 2.0 * GGdot(m)(mm1) + GGdot(mm1)(mm1))
-        for (i <- 0 to m) {
+        // println(s"alpha: ${alpha.mkString(",")}")
+        // println(s"tau: ${tau.mkString(",")}")
+
+        val scale = SYdot(mm1)(mm1) / YYdot(mm1)(mm1)
+        // println(s"scale: ${scale}")
+
+        for (i <- 0 until m) {
           theta(i) *= scale
           tau(i) *= scale
         }
-        for (i <- start until m) {
-          val i1 = i + 1
+        tauAdjGrad *= scale
+        for (i <- start to mm1) {
           var sum = 0.0
-          for (j <- 0 to m) {
-            sum += (XGdot(j)(i1) - XGdot(j)(i)) * theta(j) + (GGdot(i1)(j) - GGdot(i)(j)) * tau(j)
+          for (j <- 0 until m) {
+            sum +=
+              (SYdot(j)(i) * theta(j) + YYdot(i)(j) * tau(j))
           }
-          val b = alpha(i) - sum / (XGdot(i1)(i1) - XGdot(i1)(i) - XGdot(i)(i1) + XGdot(i)(i))
+          sum += YGdot(i) * tauAdjGrad
+          val b = alpha(i) - sum / SYdot(i)(i)
           assert(!b.isNaN)
-          theta(i + 1) += b
-          theta(i) -= b
+          theta(i) += b
         }
 
-        DVs.combine((theta.toSeq.zip(X) ++ tau.toSeq.zip(G))
-          .filter(_._2 != null): _*)
-          .persist(StorageLevel.MEMORY_AND_DISK, eager = eagerPersist)
+        // for debug
+        /*
+        println("cached rdd (S & Y) ID:")
+        for (i <- 0 until m) {
+          if (S(i) != null) print(" " + S(i).vecs.id)
+          if (Y(i) != null) print(" " + Y(i).vecs.id)
+        }
+        println()
+        println("lastX & lastGrad")
+        println(s"${lastX.vecs.id} ${lastGrad.vecs.id}")
+        */
+
+        // println(s"theta: ${theta.mkString(",")}")
+        DVs.combine(
+          (theta.toSeq.zip(S) ++ tau.toSeq.zip(Y) ++ Seq((tauAdjGrad, newAdjGrad)))
+            .filter(_._2 != null): _*)
       }
       k += 1
       dir

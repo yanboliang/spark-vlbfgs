@@ -322,6 +322,7 @@ class VLogisticRegression(override val uid: String)
     }
 
     val rawCoeffs = state.x // `x` already persisted.
+    assert(rawCoeffs.isPersisted)
 
     // println(s"rawCoeffs: ${rawCoeffs.toLocal.toString}")
 
