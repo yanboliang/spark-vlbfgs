@@ -23,8 +23,25 @@ import org.apache.spark.internal.Logging
 import org.apache.spark.ml.linalg.{DistributedVector => DV, DistributedVectors => DVs}
 import org.apache.spark.storage.StorageLevel
 
+/**
+ * Implements vector free LBFGS
+ *
+ * Special note for LBFGS:
+ *  If you use it in published work, you must cite one of:
+ *  * J. Nocedal. Updating  Quasi-Newton  Matrices  with  Limited  Storage
+ *    (1980), Mathematics of Computation 35, pp. 773-782.
+ *  * D.C. Liu and J. Nocedal. On the  Limited  mem  Method  for  Large
+ *    Scale  Optimization  (1989),  Mathematical  Programming  B,  45,  3,
+ *    pp. 503-528.
+ *
+ * Vector-free LBFGS paper:
+ *  * wzchen,zhwang,jrzhou, microsoft, Large-scale L-BFGS using MapReduce
+ *
+ * @param m: The memory of the search. 3 to 7 is usually sufficient.
+ */
+
 class VectorFreeLBFGS(
-    maxIter: Int = -1,
+    maxIter: Int,
     m: Int = 7,
     tolerance: Double = 1E-9,
     eagerPersist: Boolean = true,
@@ -561,11 +578,12 @@ object VectorFreeLBFGS {
 
         var newS: DV = null
         var newY: DV = null
+
         newSYTaskList.foreach(task => task match {
           case "S" =>
-            newS = newX.sub(lastX).persist(StorageLevel.MEMORY_AND_DISK, eager = eagerPersist)
+            newS = newX.sub(lastX).persist(StorageLevel.MEMORY_AND_DISK, eager = true)
           case "Y" =>
-            newY = newGrad.sub(lastGrad).persist(StorageLevel.MEMORY_AND_DISK, eager = eagerPersist)
+            newY = newGrad.sub(lastGrad).persist(StorageLevel.MEMORY_AND_DISK, eager = true)
         })
 
         // now we can release `lastX` and `lastGrad`

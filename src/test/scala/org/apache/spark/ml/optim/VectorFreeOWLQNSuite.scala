@@ -20,16 +20,15 @@ package org.apache.spark.ml.optim
 import java.util.Random
 
 import breeze.linalg.{DenseVector => BDV, norm => Bnorm}
-import breeze.optimize.{DiffFunction => BDF, LBFGS => BreezeLBFGS}
-import org.apache.spark.ml.linalg.Vectors
+import breeze.optimize.{DiffFunction => BDF, OWLQN => BreezeOWLQN}
 import org.apache.spark.SparkFunSuite
-import org.apache.spark.ml.linalg.DistributedVector
+import org.apache.spark.ml.linalg.{DistributedVector, Vectors}
 import org.apache.spark.ml.util.VUtils
 import org.apache.spark.ml.util.TestingUtils._
 import org.apache.spark.mllib.util.MLlibTestSparkContext
 import org.apache.spark.storage.StorageLevel
 
-class VectorFreeLBFGSSuite extends SparkFunSuite with MLlibTestSparkContext {
+class VectorFreeOWLQNSuite extends SparkFunSuite with MLlibTestSparkContext {
 
   def rangeRandDouble(x: Double, y: Double, rand: Random): Double ={
     x + (y - x) * rand.nextDouble()
@@ -42,8 +41,8 @@ class VectorFreeLBFGSSuite extends SparkFunSuite with MLlibTestSparkContext {
   test ("quadratic-test") {
     val rand = new Random(100)
 
-    val lbfgs = new BreezeLBFGS[BDV[Double]](100, 10)
-    val vf_lbfgs = new VectorFreeLBFGS(100, 10)
+    val owlqn = new BreezeOWLQN[Int, BDV[Double]](100, 10, _ => 3.0)
+    val vf_owqln = new VectorFreeOWLQN(100, 10, 3.0)
 
     val initData: Array[Double] = Array.fill(10)(0.0)
       .map(x => rangeRandDouble(-10D, 10D, rand))
@@ -65,18 +64,18 @@ class VectorFreeLBFGSSuite extends SparkFunSuite with MLlibTestSparkContext {
       }
     }
 
-    val lbfgsIter = lbfgs.iterations(df, initBDV)
-    val vf_lbfgsIter = vf_lbfgs.iterations(vf_df, initDisV)
+    val owlqnIter = owlqn.iterations(df, initBDV)
+    val vf_owlqnIter = vf_owqln.iterations(vf_df, initDisV)
 
-    var state: lbfgs.State = null
-    var vf_state: vf_lbfgs.State = null
+    var state: owlqn.State = null
+    var vf_state: vf_owqln.State = null
 
-    while (lbfgsIter.hasNext) {
-      state = lbfgsIter.next()
+    while (owlqnIter.hasNext) {
+      state = owlqnIter.next()
     }
 
-    while (vf_lbfgsIter.hasNext) {
-      vf_state = vf_lbfgsIter.next()
+    while (vf_owlqnIter.hasNext) {
+      vf_state = vf_owlqnIter.next()
     }
 
     assert(vf_state.x.toLocal ~== Vectors.fromBreeze(state.x) relTol 1E-3)
@@ -92,8 +91,8 @@ class VectorFreeLBFGSSuite extends SparkFunSuite with MLlibTestSparkContext {
 
     val totalSize = dimension
 
-    val lbfgs = new BreezeLBFGS[BDV[Double]](maxIter, bm)
-    val vf_lbfgs = new VectorFreeLBFGS(maxIter, bm)
+    val owlqn = new BreezeOWLQN[Int, BDV[Double]](maxIter, bm, _ => 3.0)
+    val vf_owlqn = new VectorFreeOWLQN(maxIter, bm, 3.0)
 
     val initData: Array[Double] = Array.fill(dimension)(0.0)
       .map(x => rangeRandDouble(-10D, 10D, rand))
@@ -128,28 +127,54 @@ class VectorFreeLBFGSSuite extends SparkFunSuite with MLlibTestSparkContext {
       }
     }
 
-    val lbfgsIter = lbfgs.iterations(df, initBDV)
-    val vf_lbfgsIter = vf_lbfgs.iterations(vf_df, initDisV)
+    val owlqnIter = owlqn.iterations(df, initBDV)
+    val vf_owlqnIter = vf_owlqn.iterations(vf_df, initDisV)
 
-    var state: lbfgs.State = null
-    var vf_state: vf_lbfgs.State = null
+    var state: owlqn.State = null
+    var vf_state: vf_owlqn.State = null
 
-    while (lbfgsIter.hasNext) {
-      state = lbfgsIter.next()
+    while (owlqnIter.hasNext) {
+      state = owlqnIter.next()
       println(s"br_x${state.iter}: ${state.x}")
     }
 
-    while (vf_lbfgsIter.hasNext) {
-      vf_state = vf_lbfgsIter.next()
+    while (vf_owlqnIter.hasNext) {
+      vf_state = vf_owlqnIter.next()
       println(s"vf_x${vf_state.iter}: ${vf_state.x.toLocal}")
     }
 
     assert(vf_state.x.toLocal ~== Vectors.fromBreeze(state.x) relTol 0.1)
+
+    val l1RegArr: Array[Double] = Array.fill(dimension)(0.0)
+      .map(x => rangeRandDouble(1D, 10D, rand))
+
+    val l1RegDV = VUtils.splitArrIntoDV(sc, l1RegArr, partSize, partNum).persist()
+    initDisV.persist()
+    val owlqn2 = new BreezeOWLQN[Int, BDV[Double]](maxIter, bm, (k:Int) => l1RegArr(k))
+    val vf_owlqn2 = new VectorFreeOWLQN(maxIter, bm, l1RegDV)
+
+    val owlqnIter2 = owlqn2.iterations(df, initBDV)
+    val vf_owlqnIter2 = vf_owlqn2.iterations(vf_df, initDisV)
+
+    var state2: owlqn2.State = null
+    var vf_state2: vf_owlqn2.State = null
+
+    while (owlqnIter2.hasNext) {
+      state2 = owlqnIter2.next()
+      println(s"br2_x${state2.iter}: ${state2.x}")
+    }
+
+    while (vf_owlqnIter2.hasNext) {
+      vf_state2 = vf_owlqnIter2.next()
+      println(s"vf2_x${vf_state2.iter}: ${vf_state2.x.toLocal}")
+    }
+
+    assert(vf_state2.x.toLocal ~== Vectors.fromBreeze(state2.x) relTol 0.1)
   }
 
   test("lbfgs-c rosenbrock example") {
 
-    for (bm <- 4 to 10) {
+    for (bm <- 4 to 6) {
       for (dimension <- 4 to 6 by 2) {
         testRosenbrock(bm, 10, dimension)
       }
