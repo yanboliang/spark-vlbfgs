@@ -37,7 +37,11 @@ import org.apache.spark.storage.StorageLevel
  * Vector-free LBFGS paper:
  *  * wzchen,zhwang,jrzhou, microsoft, Large-scale L-BFGS using MapReduce
  *
- * @param m: The memory of the search. 3 to 7 is usually sufficient.
+ * @param maxIter max iteration number.
+ * @param m correction number for LBFGS. 3 to 7 is usually sufficient.
+ * @param tolerance the convergence tolerance of iterations.
+ * @param eagerPersist whether eagerly persist distributed vectors when calculating.
+ * @param useNewHistoryClass use History2 implementation otherwise History1, only for debug.
  */
 
 class VectorFreeLBFGS(
