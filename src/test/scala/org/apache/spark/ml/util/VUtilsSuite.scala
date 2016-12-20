@@ -17,6 +17,8 @@
 
 package org.apache.spark.ml.util
 
+import java.util.concurrent.Executors
+
 import org.apache.spark.SparkFunSuite
 import org.apache.spark.rdd.RDD
 import org.apache.spark.ml.linalg._
@@ -206,5 +208,15 @@ class VUtilsSuite extends SparkFunSuite with MLlibTestSparkContext {
     ).toDenseVector
 
     assert(result ~== Vectors.dense(4.0, 6.0, 5.0) relTol 1e-3)
+  }
+
+  test("concurrent execute tasks") {
+    val res = new Array[Int](10)
+    val pool = Executors.newCachedThreadPool()
+    VUtils.concurrentExecuteTasks(0 until 10, pool, (taskId: Int) => {
+      Thread.sleep(500 + 200 * (taskId % 3))
+      res(taskId) = taskId * 10
+    })
+    assert(res === (0 until 100 by 10).toArray)
   }
 }
