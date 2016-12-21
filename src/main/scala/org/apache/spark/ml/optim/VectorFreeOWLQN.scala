@@ -26,31 +26,41 @@ import org.apache.spark.storage.StorageLevel
  * which is a variant of LBFGS that handles L1 regularization.
  *
  * Paper is Andrew and Gao (2007) Scalable Training of L1-Regularized Log-Linear Models
+ *
+ * @param maxIter max iteration number.
+ * @param m correction number for LBFGS. 3 to 7 is usually sufficient.
+ * @param l1RegValue A tuple contains a double value of L1 reg and a boolean value specifying
+ *                   whether the last coefficient is intercept
+ * @param l1RegDV A DistributedVector for L1 reg vector. Param `l1RegValue` and `l1RegDV`
+ *                  must only choose one.
+ * @param tolerance the convergence tolerance of iterations.
+ * @param eagerPersist whether eagerly persist distributed vectors when calculating.
  */
 class VectorFreeOWLQN (
     maxIter: Int,
     m: Int,
-    l1RegValue: Double,
+    l1RegValue: (Double, Boolean),
     l1RegDV: DV,
     tolerance: Double,
     eagerPersist: Boolean)
 
   extends VectorFreeLBFGS(maxIter, m, tolerance, eagerPersist) { optimizer =>
 
-  def this(maxIter: Int, m: Int, l1Reg: DV, tolerance: Double) = {
-    this(maxIter, m, 0.0, l1Reg, tolerance, eagerPersist = true)
+  def this(maxIter: Int, m: Int, l1Reg: DV, tolerance: Double, eagerPersist: Boolean) = {
+    this(maxIter, m, null, l1Reg, tolerance, eagerPersist = eagerPersist)
   }
 
-  def this(maxIter: Int, m: Int, l1Reg: Double, tolerance: Double) = {
-    this(maxIter, m, l1Reg, null, tolerance, eagerPersist = true)
+  def this(maxIter: Int, m: Int, l1RegValue: (Double, Boolean), tolerance: Double,
+      eagerPersist: Boolean) = {
+    this(maxIter, m, l1RegValue, null, tolerance, eagerPersist = eagerPersist)
   }
 
   def this(maxIter: Int, m: Int, l1Reg: DV) = {
-    this(maxIter, m, 0.0, l1Reg, tolerance = 1e-8, eagerPersist = true)
+    this(maxIter, m, null, l1Reg, tolerance = 1e-8, eagerPersist = true)
   }
 
-  def this(maxIter: Int, m: Int, l1Reg: Double) = {
-    this(maxIter, m, l1Reg, null, tolerance = 1e-8, eagerPersist = true)
+  def this(maxIter: Int, m: Int, l1RegValue: (Double, Boolean)) = {
+    this(maxIter, m, l1RegValue, null, tolerance = 1e-8, eagerPersist = true)
   }
 
   override def chooseDescentDirection(history: this.History, state: this.State): DV = {
@@ -92,7 +102,7 @@ class VectorFreeOWLQN (
         }
         Vectors.dense(res)
     }
-    newX.persist(StorageLevel.MEMORY_AND_DISK, eager = true)
+    newX.persist(StorageLevel.MEMORY_AND_DISK, eager = eagerPersist)
   }
 
   // Adds in the regularization stuff to the gradient(pseudo-gradient)
@@ -135,14 +145,19 @@ class VectorFreeOWLQN (
           Vectors.dense(res)
       }
     } else {
-      val localL1RegValue = l1RegValue
-      newX.zipPartitions(newGrad) {
-        (partX: Vector, partGrad: Vector) =>
+      val localL1RegValue = l1RegValue._1
+      val withIntercept = l1RegValue._2
+
+      val numParts = newX.nParts
+      newX.zipPartitionsWithIndex(newGrad) {
+        (pid: Int, partX: Vector, partGrad: Vector) =>
           val res = Array.fill(partX.size)(0.0)
           var i = 0
           while (i < partX.size) {
+            val isIntercept = (withIntercept && pid == numParts - 1 && i == partX.size - 1)
+            val realReg = if (isIntercept) 0.0 else localL1RegValue
             val (l1Value, vAdjGrad) =
-              calculateComponentWithL1(partX(i), partGrad(i), localL1RegValue)
+              calculateComponentWithL1(partX(i), partGrad(i), realReg)
             l1ValueAccu.add(l1Value)
             res(i) = vAdjGrad
             i += 1

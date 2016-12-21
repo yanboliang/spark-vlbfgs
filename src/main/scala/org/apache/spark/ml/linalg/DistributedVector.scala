@@ -99,6 +99,16 @@ class DistributedVector(
     }
   }
 
+  def mapPartitionsWithIndex(f: (Int, Vector) => Vector) = {
+    new DistributedVector(
+      vecs.mapPartitionsWithIndex{(pid: Int, iter: Iterator[Vector]) =>
+        iter.map(v => f(pid, v))
+      }, sizePerPart, nParts, nSize
+    )
+  }
+
+  def compressed = mapPartitionsWithIndex((pid: Int, v: Vector) => v.compressed)
+
   def zipPartitions(dv2: DistributedVector)(f: (Vector, Vector) => Vector) = {
     require(sizePerPart == dv2.sizePerPart && nParts == dv2.nParts)
 
@@ -156,7 +166,7 @@ class DistributedVector(
   def toLocal: Vector = {
     require(nSize < Int.MaxValue)
     val v = Array.concat(vecs.zipWithIndex().collect().sortWith(_._2 < _._2).map(_._1.toArray): _*)
-    Vectors.dense(v)
+    Vectors.dense(v).compressed
   }
 
   def isPersisted: Boolean = {

@@ -42,7 +42,7 @@ class VectorFreeOWLQNSuite extends SparkFunSuite with MLlibTestSparkContext {
     val rand = new Random(100)
 
     val owlqn = new BreezeOWLQN[Int, BDV[Double]](100, 10, _ => 3.0)
-    val vf_owqln = new VectorFreeOWLQN(100, 10, 3.0)
+    val vf_owqln = new VectorFreeOWLQN(100, 10, (3.0, false))
 
     val initData: Array[Double] = Array.fill(10)(0.0)
       .map(x => rangeRandDouble(-10D, 10D, rand))
@@ -92,7 +92,7 @@ class VectorFreeOWLQNSuite extends SparkFunSuite with MLlibTestSparkContext {
     val totalSize = dimension
 
     val owlqn = new BreezeOWLQN[Int, BDV[Double]](maxIter, bm, _ => 3.0)
-    val vf_owlqn = new VectorFreeOWLQN(maxIter, bm, 3.0)
+    val vf_owlqn = new VectorFreeOWLQN(maxIter, bm, (3.0, false))
 
     val initData: Array[Double] = Array.fill(dimension)(0.0)
       .map(x => rangeRandDouble(-10D, 10D, rand))

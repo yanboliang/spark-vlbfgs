@@ -100,7 +100,6 @@ class VLogisticRegressionSuite extends SparkFunSuite with MLlibTestSparkContext 
       spark.createDataFrame(sc.parallelize(data2, 4)))
   }
 
-
   test("test on testData1, w/ weight, L2 reg = 0, w/o intercept") {
 
     val vtrainer = new VLogisticRegression()
@@ -122,7 +121,7 @@ class VLogisticRegressionSuite extends SparkFunSuite with MLlibTestSparkContext 
 
     println(s"VLogisticRegression coefficients: ${vmodel.coefficients.toLocal}\n" +
       s"LogisticRegression coefficients: ${model.coefficients}")
-    assert(vmodel.coefficients.toLocal ~== model.coefficients relTol 1E-5)
+    assert(vmodel.coefficients.toLocal ~== model.coefficients relTol 1e-3)
   }
 
   test("test on testData1, w/o weight, L2 reg = 0, w/o intercept") {
@@ -144,7 +143,7 @@ class VLogisticRegressionSuite extends SparkFunSuite with MLlibTestSparkContext 
 
     println(s"VLogisticRegression coefficients: ${vmodel.coefficients.toLocal}\n" +
       s"LogisticRegression coefficients: ${model.coefficients}")
-    assert(vmodel.coefficients.toLocal ~== model.coefficients relTol 1E-5)
+    assert(vmodel.coefficients.toLocal ~== model.coefficients relTol 1e-3)
   }
 
   test("test on testData1, w/ weight, L2 reg = 0.8, w/ standardize, w/o intercept") {
@@ -170,7 +169,7 @@ class VLogisticRegressionSuite extends SparkFunSuite with MLlibTestSparkContext 
 
     println(s"VLogisticRegression coefficients: ${vmodel.coefficients.toLocal}\n" +
       s"LogisticRegression coefficient: ${model.coefficients}")
-    assert(vmodel.coefficients.toLocal ~== model.coefficients relTol 1E-5)
+    assert(vmodel.coefficients.toLocal ~== model.coefficients relTol 1e-3)
   }
 
   test("test on testData1, w/ weight, L2 reg = 0.8, w/o standardize, w/o intercept") {
@@ -194,7 +193,89 @@ class VLogisticRegressionSuite extends SparkFunSuite with MLlibTestSparkContext 
 
     println(s"VLogisticRegression coefficients: ${vmodel.coefficients.toLocal}\n" +
       s"LogisticRegression coefficient: ${model.coefficients}")
-    assert(vmodel.coefficients.toLocal ~== model.coefficients relTol 1E-5)
+    assert(vmodel.coefficients.toLocal ~== model.coefficients relTol 1e-3)
+  }
+
+  test("test on testData1, w/ weight, reg = 0.8, elasticNet = 1.0, w/ standardize, w/o intercept") {
+
+    val vtrainer = new VLogisticRegression()
+      .setFitIntercept(false)
+      .setColsPerBlock(1)
+      .setRowsPerBlock(1)
+      .setColPartitions(3)
+      .setRowPartitions(2)
+      .setWeightCol("weight")
+      .setRegParam(0.8)
+      .setElasticNetParam(1.0)
+      .setStandardization(true)
+      .setEagerPersist(false)
+    val vmodel = vtrainer.fit(testData1)
+
+    val trainer = new LogisticRegression()
+      .setFitIntercept(false)
+      .setWeightCol("weight")
+      .setRegParam(0.8)
+      .setElasticNetParam(1.0)
+      .setStandardization(true)
+    val model = trainer.fit(testData1)
+
+    println(s"VLogisticRegression coefficients: ${vmodel.coefficients.toLocal}\n" +
+      s"LogisticRegression coefficient: ${model.coefficients}")
+    assert(vmodel.coefficients.toLocal ~== model.coefficients relTol 1e-3)
+  }
+
+  test("test on testData1, w/ weight, reg = 0.8, elasticNet = 1.0, w/o standardize, w/o intercept") {
+
+    val vtrainer = new VLogisticRegression()
+      .setFitIntercept(false)
+      .setColsPerBlock(1)
+      .setRowsPerBlock(1)
+      .setColPartitions(3)
+      .setRowPartitions(2)
+      .setWeightCol("weight")
+      .setRegParam(0.8)
+      .setElasticNetParam(1.0)
+      .setStandardization(false)
+      .setEagerPersist(false)
+    val vmodel = vtrainer.fit(testData1)
+
+    val trainer = new LogisticRegression()
+      .setFitIntercept(false)
+      .setWeightCol("weight")
+      .setRegParam(0.8)
+      .setElasticNetParam(1.0)
+      .setStandardization(false)
+    val model = trainer.fit(testData1)
+
+    println(s"VLogisticRegression coefficients: ${vmodel.coefficients.toLocal}\n" +
+      s"LogisticRegression coefficient: ${model.coefficients}")
+    assert(vmodel.coefficients.toLocal ~== model.coefficients relTol 1e-3)
+  }
+
+  test("test on testData1, w/ weight, reg = 0.8, elasticNet = 0.6, w/o standardize, w/o intercept") {
+
+    val vtrainer = new VLogisticRegression()
+      .setFitIntercept(false)
+      .setColsPerBlock(4)
+      .setRowsPerBlock(5)
+      .setWeightCol("weight")
+      .setRegParam(0.8)
+      .setElasticNetParam(0.6)
+      .setStandardization(false)
+      .setEagerPersist(false)
+    val vmodel = vtrainer.fit(testData1)
+
+    val trainer = new LogisticRegression()
+      .setFitIntercept(false)
+      .setWeightCol("weight")
+      .setRegParam(0.8)
+      .setElasticNetParam(0.6)
+      .setStandardization(false)
+    val model = trainer.fit(testData1)
+
+    println(s"VLogisticRegression coefficients: ${vmodel.coefficients.toLocal}\n" +
+      s"LogisticRegression coefficient: ${model.coefficients}")
+    assert(vmodel.coefficients.toLocal ~== model.coefficients relTol 1e-3)
   }
 
   test("test on testData1WithIntecept, w/ weight, L2 reg = 0, w/ intercept") {
@@ -218,10 +299,10 @@ class VLogisticRegressionSuite extends SparkFunSuite with MLlibTestSparkContext 
 
     println(s"VLogisticRegression coefficients: ${vmodel.coefficients.toLocal}\n" +
       s"LogisticRegression coefficients: ${model.coefficients}")
-    assert(vmodel.coefficients.toLocal ~== model.coefficients relTol 1E-5)
+    assert(vmodel.coefficients.toLocal ~== model.coefficients relTol 1e-3)
     println(s"VLogisticRegression intercept: ${vmodel.intercept}\n" +
       s"LogisticRegression intercept: ${model.intercept}")
-    assert(vmodel.intercept ~== model.intercept relTol 1E-5)
+    assert(vmodel.intercept ~== model.intercept relTol 1e-3)
   }
 
   test("test on testData1WithIntecept, w/o weight, L2 reg = 0, w/ intercept") {
@@ -243,10 +324,10 @@ class VLogisticRegressionSuite extends SparkFunSuite with MLlibTestSparkContext 
 
     println(s"VLogisticRegression coefficients: ${vmodel.coefficients.toLocal}\n" +
       s"LogisticRegression coefficients: ${model.coefficients}")
-    assert(vmodel.coefficients.toLocal ~== model.coefficients relTol 1E-5)
+    assert(vmodel.coefficients.toLocal ~== model.coefficients relTol 1e-3)
     println(s"VLogisticRegression intercept: ${vmodel.intercept}\n" +
       s"LogisticRegression intercept: ${model.intercept}")
-    assert(vmodel.intercept ~== model.intercept relTol 1E-5)
+    assert(vmodel.intercept ~== model.intercept relTol 1e-3)
   }
 
   test("test on testData1WithIntecept, w/ weight, L2 reg = 0.8, w/ standardize, w/ intercept") {
@@ -272,10 +353,10 @@ class VLogisticRegressionSuite extends SparkFunSuite with MLlibTestSparkContext 
 
     println(s"VLogisticRegression coefficients: ${vmodel.coefficients.toLocal}\n" +
       s"LogisticRegression coefficient: ${model.coefficients}")
-    assert(vmodel.coefficients.toLocal ~== model.coefficients relTol 1E-5)
+    assert(vmodel.coefficients.toLocal ~== model.coefficients relTol 1e-3)
     println(s"VLogisticRegression intercept: ${vmodel.intercept}\n" +
       s"LogisticRegression intercept: ${model.intercept}")
-    assert(vmodel.intercept ~== model.intercept relTol 1E-5)
+    assert(vmodel.intercept ~== model.intercept relTol 1e-3)
   }
 
   test("test on testData1WithIntecept, w/ weight, L2 reg = 0.8, w/o standardize, w/ intercept") {
@@ -299,10 +380,101 @@ class VLogisticRegressionSuite extends SparkFunSuite with MLlibTestSparkContext 
 
     println(s"VLogisticRegression coefficients: ${vmodel.coefficients.toLocal}\n" +
       s"LogisticRegression coefficient: ${model.coefficients}")
-    assert(vmodel.coefficients.toLocal ~== model.coefficients relTol 1E-5)
+    assert(vmodel.coefficients.toLocal ~== model.coefficients relTol 1e-3)
     println(s"VLogisticRegression intercept: ${vmodel.intercept}\n" +
       s"LogisticRegression intercept: ${model.intercept}")
-    assert(vmodel.intercept ~== model.intercept relTol 1E-5)
+    assert(vmodel.intercept ~== model.intercept relTol 1e-3)
+  }
+
+  test("test on testData1WithIntecept, w/ weight, reg = 0.8, elasticNet = 1.0, w/ standardize, w/ intercept") {
+
+    val vtrainer = new VLogisticRegression()
+      .setFitIntercept(true)
+      .setColsPerBlock(1)
+      .setRowsPerBlock(1)
+      .setColPartitions(3)
+      .setRowPartitions(2)
+      .setWeightCol("weight")
+      .setRegParam(0.8)
+      .setElasticNetParam(1.0)
+      .setStandardization(true)
+      .setEagerPersist(false)
+    val vmodel = vtrainer.fit(testData1WithIntecept)
+
+    val trainer = new LogisticRegression()
+      .setFitIntercept(true)
+      .setWeightCol("weight")
+      .setRegParam(0.8)
+      .setElasticNetParam(1.0)
+      .setStandardization(true)
+    val model = trainer.fit(testData1WithIntecept)
+
+    println(s"VLogisticRegression coefficients: ${vmodel.coefficients.toLocal}\n" +
+      s"LogisticRegression coefficient: ${model.coefficients}")
+    assert(vmodel.coefficients.toLocal ~== model.coefficients relTol 1e-3)
+    println(s"VLogisticRegression intercept: ${vmodel.intercept}\n" +
+      s"LogisticRegression intercept: ${model.intercept}")
+    assert(vmodel.intercept ~== model.intercept relTol 1e-3)
+  }
+
+  test("test on testData1WithIntecept, w/ weight, reg = 0.8, elasticNet = 1.0, w/o standardize, w/ intercept") {
+
+    val vtrainer = new VLogisticRegression()
+      .setFitIntercept(true)
+      .setColsPerBlock(1)
+      .setRowsPerBlock(1)
+      .setColPartitions(3)
+      .setRowPartitions(2)
+      .setWeightCol("weight")
+      .setRegParam(0.8)
+      .setElasticNetParam(1.0)
+      .setStandardization(false)
+      .setEagerPersist(false)
+    val vmodel = vtrainer.fit(testData1WithIntecept)
+
+    val trainer = new LogisticRegression()
+      .setFitIntercept(true)
+      .setWeightCol("weight")
+      .setRegParam(0.8)
+      .setElasticNetParam(1.0)
+      .setStandardization(false)
+    val model = trainer.fit(testData1WithIntecept)
+
+    println(s"VLogisticRegression coefficients: ${vmodel.coefficients.toLocal}\n" +
+      s"LogisticRegression coefficient: ${model.coefficients}")
+    assert(vmodel.coefficients.toLocal ~== model.coefficients relTol 1e-3)
+    println(s"VLogisticRegression intercept: ${vmodel.intercept}\n" +
+      s"LogisticRegression intercept: ${model.intercept}")
+    assert(vmodel.intercept ~== model.intercept relTol 1e-3)
+  }
+
+  test("test on testData1WithIntecept, w/ weight, reg = 0.8, elasticNet = 0.6, w/o standardize, w/ intercept") {
+
+    val vtrainer = new VLogisticRegression()
+      .setFitIntercept(true)
+      .setColsPerBlock(4)
+      .setRowsPerBlock(5)
+      .setWeightCol("weight")
+      .setRegParam(0.8)
+      .setElasticNetParam(0.6)
+      .setStandardization(false)
+      .setEagerPersist(false)
+    val vmodel = vtrainer.fit(testData1WithIntecept)
+
+    val trainer = new LogisticRegression()
+      .setFitIntercept(true)
+      .setWeightCol("weight")
+      .setRegParam(0.8)
+      .setElasticNetParam(0.6)
+      .setStandardization(false)
+    val model = trainer.fit(testData1WithIntecept)
+
+    println(s"VLogisticRegression coefficients: ${vmodel.coefficients.toLocal}\n" +
+      s"LogisticRegression coefficient: ${model.coefficients}")
+    assert(vmodel.coefficients.toLocal ~== model.coefficients relTol 1e-3)
+    println(s"VLogisticRegression intercept: ${vmodel.intercept}\n" +
+      s"LogisticRegression intercept: ${model.intercept}")
+    assert(vmodel.intercept ~== model.intercept relTol 1e-3)
   }
 
   test("VLogisticRegression (binary) w/ weighted samples") {
@@ -348,7 +520,7 @@ class VLogisticRegressionSuite extends SparkFunSuite with MLlibTestSparkContext 
       .setStandardization(true)
     val model = trainer.fit(weightedDataset)
     println(s"model: ${model.coefficients}")
-    assert(model.coefficients ~== vmodel1.coefficients.toLocal absTol 1E-5)
+    assert(model.coefficients ~== vmodel1.coefficients.toLocal absTol 1e-3)
   }
 
 }
