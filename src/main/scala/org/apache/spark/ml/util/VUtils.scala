@@ -17,8 +17,9 @@
 
 package org.apache.spark.ml.util
 
-import scala.collection.mutable.HashMap
+import java.util.concurrent.{Callable, ExecutorService, Future}
 
+import scala.collection.mutable.HashMap
 import org.apache.spark.Partitioner
 
 import scala.collection.mutable.ArrayBuffer
@@ -96,6 +97,28 @@ private[ml] object VUtils {
     rdd.mapPartitionsWithIndex { case (index, iter) =>
       List((index, Utils.getIteratorSize(iter))).toIterator
     }.collect().sortWith(_._1 < _._1).map(_._2)
+  }
+
+  // Helper method for concurrent execute tasks
+  def concurrentExecuteTasks[T](
+      tasks: Seq[T],
+      executorPool: ExecutorService,
+      taskFn: T => Unit) = {
+    val futureArr = new Array[Future[Object]](tasks.size)
+    var i = 0
+    while (i < tasks.size) {
+      val task = tasks(i)
+      val callable = new Callable[Object] {
+        override def call(): Object = {
+          taskFn(task)
+          null
+        }
+      }
+      futureArr(i) = executorPool.submit(callable)
+      i += 1
+    }
+    // wait all tasks finish
+    futureArr.map(_.get())
   }
 
   def zipRDDWithIndex[T: ClassTag](
