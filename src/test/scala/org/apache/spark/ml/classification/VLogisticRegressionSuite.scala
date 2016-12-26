@@ -22,10 +22,10 @@ import scala.util.Random
 import org.apache.spark.SparkFunSuite
 import org.apache.spark.ml.classification.LogisticRegressionSuite._
 import org.apache.spark.ml.feature.{Instance, LabeledPoint}
-import org.apache.spark.ml.linalg.{Vector, Vectors}
+import org.apache.spark.ml.linalg.Vector
 import org.apache.spark.ml.util.TestingUtils._
 import org.apache.spark.mllib.util.MLlibTestSparkContext
-import org.apache.spark.sql.DataFrame
+import org.apache.spark.sql.{DataFrame, Row}
 
 class VLogisticRegressionSuite extends SparkFunSuite with MLlibTestSparkContext {
 
@@ -119,9 +119,9 @@ class VLogisticRegressionSuite extends SparkFunSuite with MLlibTestSparkContext 
       .setStandardization(true)
     val model = trainer.fit(testData1)
 
-    println(s"VLogisticRegression coefficients: ${vmodel.coefficients.toLocal}\n" +
+    println(s"VLogisticRegression coefficients: ${vmodel.coefficients}\n" +
       s"LogisticRegression coefficients: ${model.coefficients}")
-    assert(vmodel.coefficients.toLocal ~== model.coefficients relTol 1e-3)
+    assert(vmodel.coefficients ~== model.coefficients relTol 1e-3)
   }
 
   test("test on testData1, w/o weight, L2 reg = 0, w/o intercept") {
@@ -141,9 +141,9 @@ class VLogisticRegressionSuite extends SparkFunSuite with MLlibTestSparkContext 
       .setStandardization(true)
     val model = trainer.fit(testData1)
 
-    println(s"VLogisticRegression coefficients: ${vmodel.coefficients.toLocal}\n" +
+    println(s"VLogisticRegression coefficients: ${vmodel.coefficients}\n" +
       s"LogisticRegression coefficients: ${model.coefficients}")
-    assert(vmodel.coefficients.toLocal ~== model.coefficients relTol 1e-3)
+    assert(vmodel.coefficients ~== model.coefficients relTol 1e-3)
   }
 
   test("test on testData1, w/ weight, L2 reg = 0.8, w/ standardize, w/o intercept") {
@@ -167,9 +167,9 @@ class VLogisticRegressionSuite extends SparkFunSuite with MLlibTestSparkContext 
       .setStandardization(true)
     val model = trainer.fit(testData1)
 
-    println(s"VLogisticRegression coefficients: ${vmodel.coefficients.toLocal}\n" +
+    println(s"VLogisticRegression coefficients: ${vmodel.coefficients}\n" +
       s"LogisticRegression coefficient: ${model.coefficients}")
-    assert(vmodel.coefficients.toLocal ~== model.coefficients relTol 1e-3)
+    assert(vmodel.coefficients ~== model.coefficients relTol 1e-3)
   }
 
   test("test on testData1, w/ weight, L2 reg = 0.8, w/o standardize, w/o intercept") {
@@ -191,9 +191,9 @@ class VLogisticRegressionSuite extends SparkFunSuite with MLlibTestSparkContext 
       .setStandardization(false)
     val model = trainer.fit(testData1)
 
-    println(s"VLogisticRegression coefficients: ${vmodel.coefficients.toLocal}\n" +
+    println(s"VLogisticRegression coefficients: ${vmodel.coefficients}\n" +
       s"LogisticRegression coefficient: ${model.coefficients}")
-    assert(vmodel.coefficients.toLocal ~== model.coefficients relTol 1e-3)
+    assert(vmodel.coefficients ~== model.coefficients relTol 1e-3)
   }
 
   test("test on testData1, w/ weight, reg = 0.8, elasticNet = 1.0, w/ standardize, w/o intercept") {
@@ -219,9 +219,9 @@ class VLogisticRegressionSuite extends SparkFunSuite with MLlibTestSparkContext 
       .setStandardization(true)
     val model = trainer.fit(testData1)
 
-    println(s"VLogisticRegression coefficients: ${vmodel.coefficients.toLocal}\n" +
+    println(s"VLogisticRegression coefficients: ${vmodel.coefficients}\n" +
       s"LogisticRegression coefficient: ${model.coefficients}")
-    assert(vmodel.coefficients.toLocal ~== model.coefficients relTol 1e-3)
+    assert(vmodel.coefficients ~== model.coefficients relTol 1e-3)
   }
 
   test("test on testData1, w/ weight, reg = 0.8, elasticNet = 1.0, w/o standardize, w/o intercept") {
@@ -247,9 +247,9 @@ class VLogisticRegressionSuite extends SparkFunSuite with MLlibTestSparkContext 
       .setStandardization(false)
     val model = trainer.fit(testData1)
 
-    println(s"VLogisticRegression coefficients: ${vmodel.coefficients.toLocal}\n" +
+    println(s"VLogisticRegression coefficients: ${vmodel.coefficients}\n" +
       s"LogisticRegression coefficient: ${model.coefficients}")
-    assert(vmodel.coefficients.toLocal ~== model.coefficients relTol 1e-3)
+    assert(vmodel.coefficients ~== model.coefficients relTol 1e-3)
   }
 
   test("test on testData1, w/ weight, reg = 0.8, elasticNet = 0.6, w/o standardize, w/o intercept") {
@@ -273,9 +273,9 @@ class VLogisticRegressionSuite extends SparkFunSuite with MLlibTestSparkContext 
       .setStandardization(false)
     val model = trainer.fit(testData1)
 
-    println(s"VLogisticRegression coefficients: ${vmodel.coefficients.toLocal}\n" +
+    println(s"VLogisticRegression coefficients: ${vmodel.coefficients}\n" +
       s"LogisticRegression coefficient: ${model.coefficients}")
-    assert(vmodel.coefficients.toLocal ~== model.coefficients relTol 1e-3)
+    assert(vmodel.coefficients ~== model.coefficients relTol 1e-3)
   }
 
   test("test on testData1WithIntecept, w/ weight, L2 reg = 0, w/ intercept") {
@@ -297,9 +297,9 @@ class VLogisticRegressionSuite extends SparkFunSuite with MLlibTestSparkContext 
       .setStandardization(true)
     val model = trainer.fit(testData1WithIntecept)
 
-    println(s"VLogisticRegression coefficients: ${vmodel.coefficients.toLocal}\n" +
+    println(s"VLogisticRegression coefficients: ${vmodel.coefficients}\n" +
       s"LogisticRegression coefficients: ${model.coefficients}")
-    assert(vmodel.coefficients.toLocal ~== model.coefficients relTol 1e-3)
+    assert(vmodel.coefficients ~== model.coefficients relTol 1e-3)
     println(s"VLogisticRegression intercept: ${vmodel.intercept}\n" +
       s"LogisticRegression intercept: ${model.intercept}")
     assert(vmodel.intercept ~== model.intercept relTol 1e-3)
@@ -322,9 +322,9 @@ class VLogisticRegressionSuite extends SparkFunSuite with MLlibTestSparkContext 
       .setStandardization(true)
     val model = trainer.fit(testData1WithIntecept)
 
-    println(s"VLogisticRegression coefficients: ${vmodel.coefficients.toLocal}\n" +
+    println(s"VLogisticRegression coefficients: ${vmodel.coefficients}\n" +
       s"LogisticRegression coefficients: ${model.coefficients}")
-    assert(vmodel.coefficients.toLocal ~== model.coefficients relTol 1e-3)
+    assert(vmodel.coefficients ~== model.coefficients relTol 1e-3)
     println(s"VLogisticRegression intercept: ${vmodel.intercept}\n" +
       s"LogisticRegression intercept: ${model.intercept}")
     assert(vmodel.intercept ~== model.intercept relTol 1e-3)
@@ -351,9 +351,9 @@ class VLogisticRegressionSuite extends SparkFunSuite with MLlibTestSparkContext 
       .setStandardization(true)
     val model = trainer.fit(testData1WithIntecept)
 
-    println(s"VLogisticRegression coefficients: ${vmodel.coefficients.toLocal}\n" +
+    println(s"VLogisticRegression coefficients: ${vmodel.coefficients}\n" +
       s"LogisticRegression coefficient: ${model.coefficients}")
-    assert(vmodel.coefficients.toLocal ~== model.coefficients relTol 1e-3)
+    assert(vmodel.coefficients ~== model.coefficients relTol 1e-3)
     println(s"VLogisticRegression intercept: ${vmodel.intercept}\n" +
       s"LogisticRegression intercept: ${model.intercept}")
     assert(vmodel.intercept ~== model.intercept relTol 1e-3)
@@ -378,9 +378,9 @@ class VLogisticRegressionSuite extends SparkFunSuite with MLlibTestSparkContext 
       .setStandardization(false)
     val model = trainer.fit(testData1WithIntecept)
 
-    println(s"VLogisticRegression coefficients: ${vmodel.coefficients.toLocal}\n" +
+    println(s"VLogisticRegression coefficients: ${vmodel.coefficients}\n" +
       s"LogisticRegression coefficient: ${model.coefficients}")
-    assert(vmodel.coefficients.toLocal ~== model.coefficients relTol 1e-3)
+    assert(vmodel.coefficients ~== model.coefficients relTol 1e-3)
     println(s"VLogisticRegression intercept: ${vmodel.intercept}\n" +
       s"LogisticRegression intercept: ${model.intercept}")
     assert(vmodel.intercept ~== model.intercept relTol 1e-3)
@@ -409,9 +409,9 @@ class VLogisticRegressionSuite extends SparkFunSuite with MLlibTestSparkContext 
       .setStandardization(true)
     val model = trainer.fit(testData1WithIntecept)
 
-    println(s"VLogisticRegression coefficients: ${vmodel.coefficients.toLocal}\n" +
+    println(s"VLogisticRegression coefficients: ${vmodel.coefficients}\n" +
       s"LogisticRegression coefficient: ${model.coefficients}")
-    assert(vmodel.coefficients.toLocal ~== model.coefficients relTol 1e-3)
+    assert(vmodel.coefficients ~== model.coefficients relTol 1e-3)
     println(s"VLogisticRegression intercept: ${vmodel.intercept}\n" +
       s"LogisticRegression intercept: ${model.intercept}")
     assert(vmodel.intercept ~== model.intercept relTol 1e-3)
@@ -440,9 +440,9 @@ class VLogisticRegressionSuite extends SparkFunSuite with MLlibTestSparkContext 
       .setStandardization(false)
     val model = trainer.fit(testData1WithIntecept)
 
-    println(s"VLogisticRegression coefficients: ${vmodel.coefficients.toLocal}\n" +
+    println(s"VLogisticRegression coefficients: ${vmodel.coefficients}\n" +
       s"LogisticRegression coefficient: ${model.coefficients}")
-    assert(vmodel.coefficients.toLocal ~== model.coefficients relTol 1e-3)
+    assert(vmodel.coefficients ~== model.coefficients relTol 1e-3)
     println(s"VLogisticRegression intercept: ${vmodel.intercept}\n" +
       s"LogisticRegression intercept: ${model.intercept}")
     assert(vmodel.intercept ~== model.intercept relTol 1e-3)
@@ -469,9 +469,9 @@ class VLogisticRegressionSuite extends SparkFunSuite with MLlibTestSparkContext 
       .setStandardization(false)
     val model = trainer.fit(testData1WithIntecept)
 
-    println(s"VLogisticRegression coefficients: ${vmodel.coefficients.toLocal}\n" +
+    println(s"VLogisticRegression coefficients: ${vmodel.coefficients}\n" +
       s"LogisticRegression coefficient: ${model.coefficients}")
-    assert(vmodel.coefficients.toLocal ~== model.coefficients relTol 1e-3)
+    assert(vmodel.coefficients ~== model.coefficients relTol 1e-3)
     println(s"VLogisticRegression intercept: ${vmodel.intercept}\n" +
       s"LogisticRegression intercept: ${model.intercept}")
     assert(vmodel.intercept ~== model.intercept relTol 1e-3)
@@ -508,10 +508,10 @@ class VLogisticRegressionSuite extends SparkFunSuite with MLlibTestSparkContext 
     val vmodel1 = vtrainer1.fit(dataset)
     val vmodel2 = vtrainer1.fit(weightedDataset)
     val vmodel3 = vtrainer2.fit(weightedDataset)
-    println(s"vmodel1: ${vmodel1.coefficients.toLocal}\n" +
-      s"vmodel2: ${vmodel2.coefficients.toLocal}\nvmodel3: ${vmodel3.coefficients.toLocal}")
-    assert(vmodel1.coefficients.toLocal !~= vmodel2.coefficients.toLocal absTol 1E-3)
-    assert(vmodel1.coefficients.toLocal ~== vmodel3.coefficients.toLocal absTol 1E-3)
+    println(s"vmodel1: ${vmodel1.coefficients}\n" +
+      s"vmodel2: ${vmodel2.coefficients}\nvmodel3: ${vmodel3.coefficients}")
+    assert(vmodel1.coefficients !~= vmodel2.coefficients absTol 1E-3)
+    assert(vmodel1.coefficients ~== vmodel3.coefficients absTol 1E-3)
 
     val trainer = new LogisticRegression()
       .setFitIntercept(false)
@@ -520,7 +520,68 @@ class VLogisticRegressionSuite extends SparkFunSuite with MLlibTestSparkContext 
       .setStandardization(true)
     val model = trainer.fit(weightedDataset)
     println(s"model: ${model.coefficients}")
-    assert(model.coefficients ~== vmodel1.coefficients.toLocal absTol 1e-3)
+    assert(model.coefficients ~== vmodel1.coefficients absTol 1e-3)
+  }
+
+  test("VLogisticRegression: Predictor, Classifier methods") {
+    val sqlContext = testData1.sqlContext
+    import sqlContext.implicits._
+
+    val vtrainer = new VLogisticRegression()
+      .setFitIntercept(false)
+      .setColsPerBlock(3)
+      .setRowsPerBlock(2)
+      .setWeightCol("weight")
+      .setRegParam(0.0)
+      .setStandardization(true)
+      .setEagerPersist(false)
+    val vmodel = vtrainer.fit(testData1)
+    assert(vmodel.numClasses === 2)
+    val numFeatures = testData1.select("features").first().getAs[Vector](0).size
+    assert(vmodel.numFeatures === numFeatures)
+
+    val results = vmodel.transform(testData1)
+
+    // Compare rawPrediction with probability
+    results.select("rawPrediction", "probability").collect().foreach {
+      case Row(raw: Vector, prob: Vector) =>
+        assert(raw.size === 2)
+        assert(prob.size === 2)
+        val probFromRaw1 = 1.0 / (1.0 + math.exp(-raw(1)))
+        assert(prob(1) ~== probFromRaw1 relTol 1e-5)
+        assert(prob(0) ~== 1.0 - probFromRaw1 relTol 1e-5)
+    }
+
+    // Compare prediction with probability
+    results.select("prediction", "probability").collect().foreach {
+      case Row(pred: Double, prob: Vector) =>
+        val predFromProb = prob.toArray.zipWithIndex.maxBy(_._1)._2
+        assert(pred === predFromProb)
+    }
+
+    // force it to use raw2prediction
+    vmodel.setProbabilityCol("")
+    val resultsUsingRaw2Predict =
+      vmodel.transform(testData1).select("prediction").as[Double].collect()
+    resultsUsingRaw2Predict.zip(results.select("prediction").as[Double].collect()).foreach {
+      case (pred1, pred2) => assert(pred1 === pred2)
+    }
+
+    // force it to use probability2prediction
+    vmodel.setRawPredictionCol("")
+    val resultsUsingProb2Predict =
+      vmodel.transform(testData1).select("prediction").as[Double].collect()
+    resultsUsingProb2Predict.zip(results.select("prediction").as[Double].collect()).foreach {
+      case (pred1, pred2) => assert(pred1 === pred2)
+    }
+
+    // force it to use predict
+    vmodel.setRawPredictionCol("").setProbabilityCol("")
+    val resultsUsingPredict =
+      vmodel.transform(testData1).select("prediction").as[Double].collect()
+    resultsUsingPredict.zip(results.select("prediction").as[Double].collect()).foreach {
+      case (pred1, pred2) => assert(pred1 === pred2)
+    }
   }
 
 }

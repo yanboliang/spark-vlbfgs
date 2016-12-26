@@ -18,10 +18,10 @@
 package org.apache.spark.ml.classification
 
 import scala.collection.mutable.ArrayBuffer
-import breeze.linalg.{DenseVector => BDV}
+
 import org.apache.spark.internal.Logging
 import org.apache.spark.ml.feature.Instance
-import org.apache.spark.ml.linalg.{DenseVector, DistributedVectorPartitioner, SparseMatrix,
+import org.apache.spark.ml.linalg.{BLAS, DenseVector, DistributedVectorPartitioner, SparseMatrix,
   SparseVector, Vector, Vectors, DistributedVector => DV, DistributedVectors => DVs}
 import org.apache.spark.ml.optim.{VDiffFunction, VectorFreeLBFGS, VectorFreeOWLQN}
 import org.apache.spark.ml.param.{BooleanParam, IntParam, ParamMap, ParamValidators}
@@ -36,7 +36,7 @@ import org.apache.spark.sql.{Dataset, Row}
 import org.apache.spark.sql.functions._
 import org.apache.spark.sql.types.DoubleType
 import org.apache.spark.storage.StorageLevel
-import org.apache.spark.util.{DoubleAccumulator, RDDUtils}
+import org.apache.spark.util.RDDUtils
 
 /**
  * Params for vector-free logistic regression.
@@ -485,7 +485,7 @@ class VLogisticRegression(override val uid: String)
     // here must eager persist the RDD, because we need the interceptValAccu value now.
 
     val interceptVal = interceptValAccu.value
-    val model = copyValues(new VLogisticRegressionModel(uid, coeffs, interceptVal))
+    val model = copyValues(new VLogisticRegressionModel(uid, coeffs.toLocal, interceptVal))
     model
   }
 
@@ -683,27 +683,30 @@ private[ml] class VBinomialLogisticCostFun(
  */
 class VLogisticRegressionModel private[spark](
     override val uid: String,
-    val coefficients: DV,
+    val coefficients: Vector,
     val intercept: Double)
   extends ProbabilisticClassificationModel[Vector, VLogisticRegressionModel]
   with VLogisticRegressionParams {
 
-  /** Margin (rawPrediction) for class label 1.  For binary classification only. */
+  /**
+   * Margin (rawPrediction) for class label 1.
+   * For binary classification only.
+   */
   private val margin: Vector => Double = (features) => {
-    // features.dot(coefficients)
-    throw new UnsupportedOperationException("unsupported operation.")
+    BLAS.dot(features, coefficients) + intercept
   }
 
-  /** Score (probability) for class label 1.  For binary classification only. */
+  /**
+   * Score (probability) for class label 1.
+   * For binary classification only.
+   */
   private val score: Vector => Double = (features) => {
     val m = margin(features)
     1.0 / (1.0 + math.exp(-m))
   }
 
-  override val numFeatures: Int = {
-    require(coefficients.nSize < Int.MaxValue)
-    coefficients.nSize.toInt
-  }
+  override val numFeatures: Int = coefficients.size
+
 
   override val numClasses: Int = 2
 
@@ -721,7 +724,8 @@ class VLogisticRegressionModel private[spark](
           i += 1
         }
         dv
-      case _ => throw new RuntimeException("Unexcepted error in LogisticRegressionModel.")
+      case _ => throw new RuntimeException("Unexcepted error in VLogisticRegressionModel: " +
+        "raw2probabilitiesInPlace encountered SparseVector")
     }
   }
 
@@ -731,9 +735,7 @@ class VLogisticRegressionModel private[spark](
   }
 
   override def copy(extra: ParamMap): VLogisticRegressionModel = {
-    val newModel = copyValues(
-      new VLogisticRegressionModel(uid, coefficients, intercept),
-      extra)
+    val newModel = copyValues(new VLogisticRegressionModel(uid, coefficients, intercept), extra)
     newModel.setParent(parent)
   }
 }

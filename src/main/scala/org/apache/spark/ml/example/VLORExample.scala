@@ -77,8 +77,8 @@ object VLORExample {
     val sc = spark.sparkContext
 
     try {
-      println(s"begin load data from ${dataPath}")
-      val dataset1: Dataset[_] = spark.read.format("libsvm")
+      println(s"begin load data from $dataPath")
+      val dataset: Dataset[_] = spark.read.format("libsvm")
         .option("numFeatures", dimension.toString)
         .load(dataPath)
 
@@ -92,10 +92,9 @@ object VLORExample {
         .setFitIntercept(fitIntercept)
         .setEagerPersist(eagerPersist)
 
-      val vmodel = vtrainer.fit(dataset1)
+      val vmodel = vtrainer.fit(dataset)
 
-      println(s"VLogistic regression coefficients first partition:" +
-        s" ${vmodel.coefficients.vecs.first()}")
+      println(s"Vector-free logistic regression coefficients: ${vmodel.coefficients}")
     } finally {
       println("Press ENTER to exit.")
       System.in.read()

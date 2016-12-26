@@ -47,7 +47,7 @@ object VLORRealDataExample {
       .setRegParam(0.5)
     val vmodel = vtrainer.fit(dataset1)
 
-    println(s"VLogistic regression coefficients: ${vmodel.coefficients.toLocal}")
+    println(s"VLogistic regression coefficients: ${vmodel.coefficients}")
     println(s"Logistic regression coefficients: ${model.coefficients}")
 
     sc.stop()
