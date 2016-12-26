@@ -25,7 +25,11 @@ class RDDUtilsSuite extends SparkFunSuite with SharedSparkContext {
     super.beforeAll()
   }
 
-  test("isRDDRealPersisted & isRDDPersisted") {
+  /**
+   * The `isRDDRealPersisted` implementation is not used currently
+   * and needs to be updated.
+   */
+  ignore("isRDDRealPersisted & isRDDPersisted") {
 
     val rdd = sc.parallelize(Seq(1, 2, 3), 3).map(_ + 10)
 
