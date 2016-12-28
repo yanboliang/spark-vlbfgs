@@ -180,6 +180,15 @@ class VectorFreeOWLQN (
       eagerPersist: Boolean)
     extends DiffFunction[Double]{
 
+    // store last step size
+    var lastAlpha: Double = 0.0
+
+    // store last fn value
+    var lastValue: Double = 0.0
+
+    // store last adjusted fn value
+    var lastAdjValue: Double = 0.0
+
     // store last point vector
     var lastX: DV = null
 
@@ -201,6 +210,8 @@ class VectorFreeOWLQN (
       // release unused RDDs
       disposeLastResult()
 
+      lastAlpha = alpha
+
       // Note: here must call OWLQN.takeStep
       lastX = optimizer.takeStep(state, direction, alpha)
 
@@ -214,6 +225,8 @@ class VectorFreeOWLQN (
       assert(adjGrad.isPersisted)
 
       lastAdjGrad = adjGrad
+      lastValue = fnValue
+      lastAdjValue = adjValue
 
       val lineSearchFnGrad = adjGrad dot direction
       adjValue -> lineSearchFnGrad
@@ -240,10 +253,11 @@ class VectorFreeOWLQN (
     }
   }
 
-  override protected def determineStepSize(
+  // return Tuple(newValue, newAdjValue, newX, newGrad, newAdjGrad)
+  override protected def determineStepSizeAndTakeStep(
       state: State,
       fn: VDiffFunction,
-      direction: DV): Double = {
+      direction: DV): (Double, Double, DV, DV, DV) = {
 
     val diffFun = new VOWLQNLineSearchDiffFun(state, direction, fn, eagerPersist)
 
@@ -253,6 +267,31 @@ class VectorFreeOWLQN (
       diffFun,
       if (iter < 1) 0.5 / state.grad.norm() else 1.0
     )
-    alpha
+    var newValue: Double = 0.0
+    var newAdjValue: Double = 0.0
+    var newX: DV = null
+    var newGrad: DV = null
+    var newAdjGrad: DV = null
+
+    if (alpha == diffFun.lastAlpha) {
+      newValue = diffFun.lastValue
+      newAdjValue = diffFun.lastAdjValue
+      newX = diffFun.lastX
+      newGrad = diffFun.lastGrad
+      newAdjGrad = diffFun.lastAdjGrad
+    } else {
+      // release unused RDDs
+      diffFun.disposeLastResult()
+      newX = takeStep(state, direction, alpha)
+      assert(newX.isPersisted)
+      val (_newValue, _newGrad) = fn.calculate(newX)
+      newValue = _newValue
+      newGrad = _newGrad
+      assert(newGrad.isPersisted)
+      val (_newAdjValue, _newAdjGrad) = adjust(newX, newGrad, newValue)
+      newAdjValue = _newAdjValue
+      newAdjGrad = _newAdjGrad
+    }
+    (newValue, newAdjValue, newX, newGrad, newAdjGrad)
   }
 }

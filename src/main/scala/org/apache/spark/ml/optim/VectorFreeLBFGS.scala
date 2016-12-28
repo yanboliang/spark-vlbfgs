@@ -44,7 +44,6 @@ import org.apache.spark.storage.StorageLevel
  * @param m correction number for LBFGS. 3 to 7 is usually sufficient.
  * @param tolerance the convergence tolerance of iterations.
  * @param eagerPersist whether eagerly persist distributed vectors when calculating.
- * @param useNewHistoryClass use History2 implementation otherwise History1, only for debug.
  */
 
 class VectorFreeLBFGS(
@@ -62,10 +61,11 @@ class VectorFreeLBFGS(
   type State = VectorFreeLBFGS.State
   type History = VectorFreeLBFGS.History
 
-  protected def determineStepSize(
+  // return Tuple(newValue, newAdjValue, newX, newGrad, newAdjGrad)
+  protected def determineStepSizeAndTakeStep(
       state: State,
       fn: VDiffFunction,
-      direction: DV): Double = {
+      direction: DV): (Double, Double, DV, DV, DV) = {
     // using strong wolfe line search
     val x = state.x
     val grad = state.grad
@@ -79,10 +79,25 @@ class VectorFreeLBFGS(
       throw new StepSizeUnderflow
     }
 
-    // release unused RDDs
-    lineSearchFn.disposeLastResult()
+    var newValue: Double = 0.0
+    var newX: DV = null
+    var newGrad: DV = null
 
-    alpha
+    if (alpha == lineSearchFn.lastAlpha) {
+      newValue = lineSearchFn.lastValue
+      newX = lineSearchFn.lastX
+      newGrad = lineSearchFn.lastGrad
+    } else {
+      // release unused RDDs
+      lineSearchFn.disposeLastResult()
+      newX = takeStep(state, direction, alpha)
+      assert(newX.isPersisted)
+      val (_newValue, _newGrad) = fn.calculate(newX)
+      newValue = _newValue
+      newGrad = _newGrad
+      assert(newGrad.isPersisted)
+    }
+    (newValue, newValue, newX, newGrad, newGrad)
   }
 
   protected def takeStep(state: this.State, dir: DV, stepSize: Double): DV = {
@@ -137,16 +152,9 @@ class VectorFreeLBFGS(
       try {
         val dir = chooseDescentDirection(history, state)
         assert(dir.isPersisted)
-        val stepSize = determineStepSize(state, fn, dir)
+        val (value, adjValue, x, grad, adjGrad) = determineStepSizeAndTakeStep(state, fn, dir)
 
-        val x = takeStep(state, dir, stepSize)
-        assert(x.isPersisted)
-        val (value, grad) = fn.calculate(x)
-        assert(grad.isPersisted)
         dir.unpersist()
-        val (adjValue, adjGrad) = adjust(x, grad, value)
-        assert(adjGrad.isPersisted)
-
         // in order to save memory, release ununsed adjGrad DV
         if (state.adjustedGradient != state.grad) {
           state.adjustedGradient.unpersist()
@@ -204,6 +212,12 @@ class VectorFreeLBFGS(
 class VLineSearchDiffFun(x: DV, direction: DV, outer: VDiffFunction, eagerPersist: Boolean)
   extends DiffFunction[Double]{
 
+  // store last step size
+  var lastAlpha: Double = 0.0
+
+  // store last fn value
+  var lastValue: Double = 0.0
+
   // store last point vector
   var lastX: DV = null
 
@@ -221,6 +235,8 @@ class VLineSearchDiffFun(x: DV, direction: DV, outer: VDiffFunction, eagerPersis
     // release unused RDDs
     disposeLastResult()
 
+    lastAlpha = alpha
+
     lastX = x.addScalVec(alpha, direction)
       .persist(StorageLevel.MEMORY_AND_DISK, eager = eagerPersist)
     val (ff, grad) = outer.calculate(lastX)
@@ -228,6 +244,7 @@ class VLineSearchDiffFun(x: DV, direction: DV, outer: VDiffFunction, eagerPersis
     assert(grad.isPersisted)
 
     lastGrad = grad
+    lastValue = ff
 
     ff -> (grad dot direction)
   }
