@@ -22,6 +22,8 @@ import org.apache.spark.rdd.RDD
 import org.apache.spark.storage.StorageLevel
 import org.apache.spark.util.RDDUtils
 
+import scala.collection.mutable.ArrayBuffer
+
 class DistributedVector(
     val vecs: RDD[Vector],
     val sizePerPart: Int,
@@ -165,8 +167,15 @@ class DistributedVector(
 
   def toLocal: Vector = {
     require(nSize < Int.MaxValue)
-    val v = Array.concat(vecs.zipWithIndex().collect().sortWith(_._2 < _._2).map(_._1.toArray): _*)
-    Vectors.dense(v).compressed
+    val indicesBuff = new ArrayBuffer[Int]
+    val valueBuff = new ArrayBuffer[Double]
+    vecs.zipWithIndex().collect().sortWith(_._2 < _._2).foreach {
+      case (v: Vector, index: Long) =>
+        val sv = v.toSparse
+        indicesBuff ++= sv.indices.map(_ + index.toInt * sizePerPart)
+        valueBuff ++= sv.values
+    }
+    Vectors.sparse(nSize.toInt, indicesBuff.toArray, valueBuff.toArray).compressed
   }
 
   def isPersisted: Boolean = {
