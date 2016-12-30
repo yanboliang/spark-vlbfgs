@@ -135,17 +135,33 @@ private[ml] object VUtils {
     }
   }
 
-  def vertcatSparseVectorIntoCSRMatrix(vecs: Array[SparseVector]): SparseMatrix = {
+  def vertcatSparseVectorIntoMatrix(vecs: Array[SparseVector]): SparseMatrix = {
+    val numCols = vecs(0).size
+    val numRows = vecs.length
     var i = 0
     val entries = new ArrayBuffer[(Int, Int, Double)]()
-    while (i < vecs.length) {
-      val rowIdx = i
-      vecs(i).foreachActive { case (colIdx: Int, v: Double) =>
-        entries.append((colIdx, rowIdx, v))
+
+    if (numRows < numCols) {
+      // generating sparse matrix with CSR format
+      while (i < vecs.length) {
+        val rowIdx = i
+        vecs(i).foreachActive { case (colIdx: Int, v: Double) =>
+          entries.append((colIdx, rowIdx, v))
+        }
+        i = i + 1
       }
-      i = i + 1
+      SparseMatrix.fromCOO(numCols, numRows, entries).transpose
+    } else {
+      // generating sparse matrix with CSC format
+      while (i < vecs.length) {
+        val rowIdx = i
+        vecs(i).foreachActive { case (colIdx: Int, v: Double) =>
+          entries.append((rowIdx, colIdx, v))
+        }
+        i = i + 1
+      }
+      SparseMatrix.fromCOO(numRows, numCols, entries)
     }
-    SparseMatrix.fromCOO(vecs(0).size, vecs.length, entries).transpose
   }
 
   def zipRDDWithPartitionIDAndCollect[T: ClassTag](rdd: RDD[T]): Array[(Int, T)] = {
@@ -163,8 +179,8 @@ private[ml] object VUtils {
       f: (((Int, Int), SparseMatrix, Vector) => T)
   ): RDD[((Int, Int), T)] = {
     import org.apache.spark.rdd.VRDDFunctions._
-    require(gridPartitioner.cols == dvec.nParts)
-    blockMatrixRDD.mapJoinPartition(dvec.vecs)(
+    require(gridPartitioner.cols == dvec.numBlocks)
+    blockMatrixRDD.mapJoinPartition(dvec.blocks)(
       (pid: Int) => {  // pid is the partition ID of blockMatrix RDD
         val colPartId = gridPartitioner.colPartId(pid)
         val startIdx = colPartId * gridPartitioner.colsPerPart
@@ -195,8 +211,8 @@ private[ml] object VUtils {
       f: (((Int, Int), SparseMatrix, Vector) => T)
   ): RDD[((Int, Int), T)] = {
     import org.apache.spark.rdd.VRDDFunctions._
-    require(gridPartitioner.rows == dvec.nParts)
-    blockMatrixRDD.mapJoinPartition(dvec.vecs)(
+    require(gridPartitioner.rows == dvec.numBlocks)
+    blockMatrixRDD.mapJoinPartition(dvec.blocks)(
       (pid: Int) => {
         val rowPartId = gridPartitioner.rowPartId(pid)
         val startIdx = rowPartId * gridPartitioner.rowsPerPart

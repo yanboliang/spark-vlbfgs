@@ -111,7 +111,7 @@ class VLogisticRegression(override val uid: String)
   // Whether to eager persist distributed vector
   val eagerPersist: BooleanParam = new BooleanParam(this, "eagerPersist",
     "Whether to eager persist distributed vector.")
-  setDefault(eagerPersist -> true)
+  setDefault(eagerPersist -> false)
 
   /**
     * Set whether eagerly persist distributed vectors when calculating.
@@ -319,7 +319,7 @@ class VLogisticRegression(override val uid: String)
         .groupByKey(gridPartitioner)
         .map { case ((rowBlockIdx: Int, colBlockIdx: Int), iter: Iterable[(Int, SparseVector)]) =>
           val vecs = iter.toArray.sortWith(_._1 < _._1).map(_._2)
-          val matrix = VUtils.vertcatSparseVectorIntoCSRMatrix(vecs)
+          val matrix = VUtils.vertcatSparseVectorIntoMatrix(vecs)
           ((rowBlockIdx, colBlockIdx), matrix)
         }
 
@@ -364,45 +364,48 @@ class VLogisticRegression(override val uid: String)
         tolerance = $(tol),
         eagerPersist = $(eagerPersist)
       )
-    } else if ($(standardization)) {
-      new VectorFreeOWLQN(
-        maxIter = $(maxIter),
-        m = $(numLBFGSCorrections),
-        l1RegValue = (regParamL1, fitInterceptParam),
-        tolerance = $(tol),
-        eagerPersist = $(eagerPersist)
-      )
     } else {
-      // If `standardization` is false, we still standardize the data
-      // to improve the rate of convergence; as a result, we have to
-      // perform this reverse standardization by penalizing each component
-      // differently to get effectively the same objective function when
-      // the training dataset is not standardized.
-      val regParamL1DV = featuresStd.mapPartitionsWithIndex {
-        (pid: Int, partFeatureStd: Vector) =>
-          val blockSize = if (fitInterceptParam && pid == colBlocks - 1) {
-            partFeatureStd.size + 1 // add element slot for intercept
-          } else {
-            partFeatureStd.size
-          }
-          val res = Array.fill(blockSize)(0.0)
-          partFeatureStd.foreachActive(
-            (index: Int, value: Double) =>
-              res(index) = if (partFeatureStd(index) != 0.0) {
-                regParamL1 / partFeatureStd(index)
-              } else {
-                0.0
-              }
-          )
-          Vectors.dense(res)
+      // with L1 regulazation, use Vector-free OWLQN optimizer
+      if ($(standardization)) {
+        new VectorFreeOWLQN(
+          maxIter = $(maxIter),
+          m = $(numLBFGSCorrections),
+          l1RegValue = (regParamL1, fitInterceptParam),
+          tolerance = $(tol),
+          eagerPersist = $(eagerPersist)
+        )
+      } else {
+        // If `standardization` is false, we still standardize the data
+        // to improve the rate of convergence; as a result, we have to
+        // perform this reverse standardization by penalizing each component
+        // differently to get effectively the same objective function when
+        // the training dataset is not standardized.
+        val regParamL1DV = featuresStd.mapPartitionsWithIndex {
+          (pid: Int, partFeatureStd: Vector) =>
+            val blockSize = if (fitInterceptParam && pid == colBlocks - 1) {
+              partFeatureStd.size + 1 // add element slot for intercept
+            } else {
+              partFeatureStd.size
+            }
+            val res = Array.fill(blockSize)(0.0)
+            partFeatureStd.foreachActive(
+              (index: Int, value: Double) =>
+                res(index) = if (partFeatureStd(index) != 0.0) {
+                  regParamL1 / partFeatureStd(index)
+                } else {
+                  0.0
+                }
+            )
+            Vectors.dense(res)
+        }
+        new VectorFreeOWLQN(
+          maxIter = $(maxIter),
+          m = $(numLBFGSCorrections),
+          l1Reg = regParamL1DV,
+          tolerance = $(tol),
+          eagerPersist = $(eagerPersist)
+        )
       }
-      new VectorFreeOWLQN(
-        maxIter = $(maxIter),
-        m = $(numLBFGSCorrections),
-        l1Reg = regParamL1DV,
-        tolerance = $(tol),
-        eagerPersist = $(eagerPersist)
-      )
     }
 
     val initCoeffs: DV = if (fitInterceptParam) {
@@ -460,7 +463,7 @@ class VLogisticRegression(override val uid: String)
      */
     val interceptValAccu = sc.doubleAccumulator
     val coeffs = rawCoeffs.zipPartitionsWithIndex(
-      featuresStd, rawCoeffs.sizePerPart, numFeatures
+      featuresStd, rawCoeffs.sizePerBlock, numFeatures
     ) {
       case (pid: Int, partCoeffs: Vector, partFeatursStd: Vector) =>
         val partFeatursStdArr = partFeatursStd.toDense.toArray
@@ -618,7 +621,7 @@ private[ml] class VBinomialLogisticCostFun(
     assert(featuresStd.isPersisted)
 
     // compute regularization for grad & objective value
-    val lossRegAccu = gradDV.vecs.sparkContext.doubleAccumulator
+    val lossRegAccu = gradDV.blocks.sparkContext.doubleAccumulator
     val gradDVWithReg: DV = if (standardization) {
       gradDV.zipPartitionsWithIndex(coeffs) {
         case (pid: Int, partGrads: Vector, partCoeffs: Vector) =>

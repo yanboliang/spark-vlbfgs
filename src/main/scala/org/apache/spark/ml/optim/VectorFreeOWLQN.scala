@@ -130,7 +130,7 @@ class VectorFreeOWLQN (
       }
     }
 
-    val l1ValueAccu = newX.vecs.sparkContext.doubleAccumulator
+    val l1ValueAccu = newX.blocks.sparkContext.doubleAccumulator
     val adjGrad = if (l1RegDV != null) {
       newX.zipPartitions(newGrad, l1RegDV) {
         (partX: Vector, partGrad: Vector, partReg: Vector) =>
@@ -148,7 +148,7 @@ class VectorFreeOWLQN (
       val localL1RegValue = l1RegValue._1
       val withIntercept = l1RegValue._2
 
-      val numParts = newX.nParts
+      val numParts = newX.numBlocks
       newX.zipPartitionsWithIndex(newGrad) {
         (pid: Int, partX: Vector, partGrad: Vector) =>
           val res = Array.fill(partX.size)(0.0)
@@ -181,7 +181,7 @@ class VectorFreeOWLQN (
     extends DiffFunction[Double]{
 
     // store last step size
-    var lastAlpha: Double = 0.0
+    var lastAlpha: Double = Double.NegativeInfinity
 
     // store last fn value
     var lastValue: Double = 0.0
@@ -198,6 +198,9 @@ class VectorFreeOWLQN (
     // store last adjusted gradient vector
     var lastAdjGrad: DV = null
 
+    // store last line search grad value
+    var lastLineSearchGradValue = 0.0
+
     // calculates the value at a point
     override def valueAt(alpha: Double): Double = calculate(alpha)._1
 
@@ -207,29 +210,37 @@ class VectorFreeOWLQN (
     // Calculates both the value and the gradient at a point
     def calculate(alpha: Double): (Double, Double) = {
 
-      // release unused RDDs
-      disposeLastResult()
+      if (alpha == 0.0) {
+        state.adjustedValue -> (state.adjustedGradient dot direction)
+      } else if (alpha == lastAlpha) {
+        lastAdjValue -> lastLineSearchGradValue
+      } else {
+        // release unused RDDs
+        disposeLastResult()
 
-      lastAlpha = alpha
+        lastAlpha = alpha
 
-      // Note: here must call OWLQN.takeStep
-      lastX = optimizer.takeStep(state, direction, alpha)
+        // Note: here must call OWLQN.takeStep
+        lastX = optimizer.takeStep(state, direction, alpha)
 
-      val (fnValue, grad) = outer.calculate(lastX)
-      assert(grad.isPersisted)
+        val (fnValue, grad) = outer.calculate(lastX)
+        assert(grad.isPersisted)
 
-      lastGrad = grad
+        lastGrad = grad
 
-      // Note: here must call OWLQN.adjust
-      val (adjValue, adjGrad) = optimizer.adjust(lastX, lastGrad, fnValue)
-      assert(adjGrad.isPersisted)
+        // Note: here must call OWLQN.adjust
+        val (adjValue, adjGrad) = optimizer.adjust(lastX, lastGrad, fnValue)
+        assert(adjGrad.isPersisted)
 
-      lastAdjGrad = adjGrad
-      lastValue = fnValue
-      lastAdjValue = adjValue
+        lastAdjGrad = adjGrad
+        lastValue = fnValue
+        lastAdjValue = adjValue
 
-      val lineSearchFnGrad = adjGrad dot direction
-      adjValue -> lineSearchFnGrad
+        val lineSearchFnGrad = adjGrad dot direction
+        lastLineSearchGradValue = lineSearchFnGrad
+
+        adjValue -> lineSearchFnGrad
+      }
     }
 
     def disposeLastResult() = {
@@ -259,12 +270,12 @@ class VectorFreeOWLQN (
       fn: VDiffFunction,
       direction: DV): (Double, Double, DV, DV, DV) = {
 
-    val diffFun = new VOWLQNLineSearchDiffFun(state, direction, fn, eagerPersist)
+    val lineSearchDiffFn = new VOWLQNLineSearchDiffFun(state, direction, fn, eagerPersist)
 
     val iter = state.iter
     val search = new BacktrackingLineSearch(state.value, shrinkStep = if(iter < 1) 0.1 else 0.5)
     val alpha = search.minimize(
-      diffFun,
+      lineSearchDiffFn,
       if (iter < 1) 0.5 / state.grad.norm() else 1.0
     )
     var newValue: Double = 0.0
@@ -273,15 +284,15 @@ class VectorFreeOWLQN (
     var newGrad: DV = null
     var newAdjGrad: DV = null
 
-    if (alpha == diffFun.lastAlpha) {
-      newValue = diffFun.lastValue
-      newAdjValue = diffFun.lastAdjValue
-      newX = diffFun.lastX
-      newGrad = diffFun.lastGrad
-      newAdjGrad = diffFun.lastAdjGrad
+    if (alpha == lineSearchDiffFn.lastAlpha) {
+      newValue = lineSearchDiffFn.lastValue
+      newAdjValue = lineSearchDiffFn.lastAdjValue
+      newX = lineSearchDiffFn.lastX
+      newGrad = lineSearchDiffFn.lastGrad
+      newAdjGrad = lineSearchDiffFn.lastAdjGrad
     } else {
       // release unused RDDs
-      diffFun.disposeLastResult()
+      lineSearchDiffFn.disposeLastResult()
       newX = takeStep(state, direction, alpha)
       assert(newX.isPersisted)
       val (_newValue, _newGrad) = fn.calculate(newX)

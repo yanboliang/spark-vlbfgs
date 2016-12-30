@@ -25,26 +25,18 @@ class RDDUtilsSuite extends SparkFunSuite with SharedSparkContext {
     super.beforeAll()
   }
 
-  /**
-   * The `isRDDRealPersisted` implementation is not used currently
-   * and needs to be updated.
-   */
-  ignore("isRDDRealPersisted & isRDDPersisted") {
+  test("isRDDPersisted") {
 
     val rdd = sc.parallelize(Seq(1, 2, 3), 3).map(_ + 10)
 
     assert(!RDDUtils.isRDDPersisted(rdd))
-    assert(!RDDUtils.isRDDRealPersisted(rdd))
-
     rdd.persist()
 
     assert(RDDUtils.isRDDPersisted(rdd))
-    assert(!RDDUtils.isRDDRealPersisted(rdd))
 
-    rdd.count() // eager persist
+    rdd.unpersist()
 
-    assert(RDDUtils.isRDDPersisted(rdd))
-    assert(RDDUtils.isRDDRealPersisted(rdd))
+    assert(!RDDUtils.isRDDPersisted(rdd))
   }
 
 }
