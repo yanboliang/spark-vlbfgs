@@ -57,7 +57,7 @@ class VUtilsSuite extends SparkFunSuite with MLlibTestSparkContext {
   test("splitArrIntoDV") {
     val arrs = splitArrIntoDV(
       sc, Array(1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0), 3, 3)
-      .vecs.collect()
+      .blocks.collect()
 
     assert(arrs(0).toArray === Array(1.0, 2.0, 3.0))
     assert(arrs(1).toArray === Array(4.0, 5.0, 6.0))
@@ -98,11 +98,16 @@ class VUtilsSuite extends SparkFunSuite with MLlibTestSparkContext {
       ))
   }
 
-  test("vertcatSparseVectorIntoCSRMatrix") {
-    assert(vertcatSparseVectorIntoCSRMatrix(Array(
+  test("vertcatSparseVectorIntoMatrix") {
+    assert(vertcatSparseVectorIntoMatrix(Array(
       Vectors.dense(1.0, 2.0, 3.0).toSparse,
       Vectors.dense(8.0, 7.0, 9.0).toSparse
     )).toDense == Matrices.dense(2, 3, Array(1.0, 8.0, 2.0, 7.0, 3.0, 9.0)))
+    assert(vertcatSparseVectorIntoMatrix(Array(
+      Vectors.dense(1.0, 2.0).toSparse,
+      Vectors.dense(3.0, 8.0).toSparse,
+      Vectors.dense(7.0, 9.0).toSparse
+    )).toDense == Matrices.dense(3, 2, Array(1.0, 3.0, 7.0, 2.0, 8.0, 9.0)))
   }
 
   def testBlockMatrixHorzZipVecFunc(rows: Int, cols: Int, rowsPerPart: Int, colsPerPart: Int) = {

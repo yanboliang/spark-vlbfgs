@@ -70,9 +70,9 @@ class VectorFreeLBFGS(
     val x = state.x
     val grad = state.grad
 
-    val lineSearchFn = fn.lineSearchDiffFunction(x, direction)
+    val lineSearchDiffFn = new VLBFGSLineSearchDiffFun(state, direction, fn, eagerPersist)
     val search = new StrongWolfeLineSearch(maxZoomIter = 10, maxLineSearchIter = 10)
-    val alpha = search.minimize(lineSearchFn,
+    val alpha = search.minimize(lineSearchDiffFn,
       if (state.iter == 0.0) 1.0 / direction.norm else 1.0)
 
     if (alpha * grad.norm < 1E-10) {
@@ -83,13 +83,13 @@ class VectorFreeLBFGS(
     var newX: DV = null
     var newGrad: DV = null
 
-    if (alpha == lineSearchFn.lastAlpha) {
-      newValue = lineSearchFn.lastValue
-      newX = lineSearchFn.lastX
-      newGrad = lineSearchFn.lastGrad
+    if (alpha == lineSearchDiffFn.lastAlpha) {
+      newValue = lineSearchDiffFn.lastValue
+      newX = lineSearchDiffFn.lastX
+      newGrad = lineSearchDiffFn.lastGrad
     } else {
       // release unused RDDs
-      lineSearchFn.disposeLastResult()
+      lineSearchDiffFn.disposeLastResult()
       newX = takeStep(state, direction, alpha)
       assert(newX.isPersisted)
       val (_newValue, _newGrad) = fn.calculate(newX)
@@ -206,60 +206,74 @@ class VectorFreeLBFGS(
     iterations(fn, init).last
   }
 
-}
+  // Line Search DiffFunction
+  class VLBFGSLineSearchDiffFun(
+      state: this.State,
+      direction: DV,
+      outer: VDiffFunction,
+      eagerPersist: Boolean
+    ) extends DiffFunction[Double]{
 
-// Line Search DiffFunction
-class VLineSearchDiffFun(x: DV, direction: DV, outer: VDiffFunction, eagerPersist: Boolean)
-  extends DiffFunction[Double]{
+    // store last step size
+    var lastAlpha: Double = Double.NegativeInfinity
 
-  // store last step size
-  var lastAlpha: Double = 0.0
+    // store last fn value
+    var lastValue: Double = 0.0
 
-  // store last fn value
-  var lastValue: Double = 0.0
+    // store last point vector
+    var lastX: DV = null
 
-  // store last point vector
-  var lastX: DV = null
+    // store last gradient vector
+    var lastGrad: DV = null
 
-  // store last gradient vector
-  var lastGrad: DV = null
+    // store last line search grad value
+    var lastLineSearchGradValue: Double = 0.0
 
-  // calculates the value at a point
-  override def valueAt(alpha: Double): Double = calculate(alpha)._1
+    // calculates the value at a point
+    override def valueAt(alpha: Double): Double = calculate(alpha)._1
 
-  // calculates the gradient at a point
-  override def gradientAt(alpha: Double): Double = calculate(alpha)._2
+    // calculates the gradient at a point
+    override def gradientAt(alpha: Double): Double = calculate(alpha)._2
 
-  // Calculates both the value and the gradient at a point
-  def calculate(alpha: Double): (Double, Double) = {
-    // release unused RDDs
-    disposeLastResult()
+    // Calculates both the value and the gradient at a point
+    def calculate(alpha: Double): (Double, Double) = {
 
-    lastAlpha = alpha
+      if (alpha == 0.0) {
+        state.value -> (state.grad dot direction)
+      } else if (lastAlpha == alpha) {
+        lastValue -> lastLineSearchGradValue
+      } else {
+        // release unused RDDs
+        disposeLastResult()
 
-    lastX = x.addScalVec(alpha, direction)
-      .persist(StorageLevel.MEMORY_AND_DISK, eager = eagerPersist)
-    val (ff, grad) = outer.calculate(lastX)
+        lastAlpha = alpha
 
-    assert(grad.isPersisted)
+        lastX = state.x.addScalVec(alpha, direction)
+          .persist(StorageLevel.MEMORY_AND_DISK, eager = eagerPersist)
+        val (fnValue, grad) = outer.calculate(lastX)
 
-    lastGrad = grad
-    lastValue = ff
+        assert(grad.isPersisted)
 
-    ff -> (grad dot direction)
-  }
+        lastGrad = grad
+        lastValue = fnValue
+        lastLineSearchGradValue = grad dot direction
 
-  def disposeLastResult() = {
-    // release last point vector
-    if (lastX != null) {
-      lastX.unpersist()
-      lastX = null
+        lastValue -> lastLineSearchGradValue
+      }
     }
 
-    // release last gradient vector
-    if (lastGrad != null) {
-      lastGrad.unpersist()
-      lastGrad = null
+    def disposeLastResult() = {
+      // release last point vector
+      if (lastX != null) {
+        lastX.unpersist()
+        lastX = null
+      }
+
+      // release last gradient vector
+      if (lastGrad != null) {
+        lastGrad.unpersist()
+        lastGrad = null
+      }
     }
   }
 }
@@ -276,9 +290,6 @@ abstract class VDiffFunction(eagerPersist: Boolean = true) { outer =>
 
   // Calculates both the value and the gradient at a point
   def calculate(x: DV): (Double, DV)
-
-  def lineSearchDiffFunction(x: DV, direction: DV): VLineSearchDiffFun
-    = new VLineSearchDiffFun(x, direction, outer, eagerPersist)
 }
 
 object VectorFreeLBFGS {
@@ -374,20 +385,15 @@ object VectorFreeLBFGS {
         var newS: DV = null
         var newY: DV = null
 
+        // if `eagerPersist` is true, the sub operation may take some time to finish so use
+        // concurrent execution here.
         VUtils.concurrentExecuteTasks[String](
           newSYTaskList, LBFGS_threadPool, task => task match {
           case "S" =>
-            newS = newX.sub(lastX).persist(StorageLevel.MEMORY_AND_DISK, eager = true)
+            newS = newX.sub(lastX).persist(StorageLevel.MEMORY_AND_DISK, eager = eagerPersist)
           case "Y" =>
-            newY = newGrad.sub(lastGrad).persist(StorageLevel.MEMORY_AND_DISK, eager = true)
+            newY = newGrad.sub(lastGrad).persist(StorageLevel.MEMORY_AND_DISK, eager = eagerPersist)
         })
-
-        // now we can release `lastX` and `lastGrad`
-        lastX.unpersist()
-        lastGrad.unpersist()
-
-        lastX = newX
-        lastGrad = newGrad
 
         // push `newS` and `newY` into LBFGS S & Y vector history.
         push(S, newS)
@@ -430,6 +436,14 @@ object VectorFreeLBFGS {
             YGdot(i) = Y(i).dot(newAdjGrad)
         })
 
+        // After vecter dot computation, we can make sure all lazy persisted vectors are
+        // actually persisted. So now we can release `lastX` and `lastGrad`
+        lastX.unpersist()
+        lastGrad.unpersist()
+
+        lastX = newX
+        lastGrad = newGrad
+
         val theta = Array.fill(m)(0.0)
         val tau = Array.fill(m)(0.0)
         var tauAdjGrad = -1.0
@@ -448,11 +462,7 @@ object VectorFreeLBFGS {
           tau(i) -= a
         }
 
-        // println(s"alpha: ${alpha.mkString(",")}")
-        // println(s"tau: ${tau.mkString(",")}")
-
         val scale = SYdot(mm1)(mm1) / YYdot(mm1)(mm1)
-        // println(s"scale: ${scale}")
 
         for (i <- 0 until m) {
           theta(i) *= scale
@@ -471,19 +481,6 @@ object VectorFreeLBFGS {
           theta(i) += b
         }
 
-        // for debug
-        /*
-        println("cached rdd (S & Y) ID:")
-        for (i <- 0 until m) {
-          if (S(i) != null) print(" " + S(i).vecs.id)
-          if (Y(i) != null) print(" " + Y(i).vecs.id)
-        }
-        println()
-        println("lastX & lastGrad")
-        println(s"${lastX.vecs.id} ${lastGrad.vecs.id}")
-        */
-
-        // println(s"theta: ${theta.mkString(",")}")
         DVs.combine(
           (theta.toSeq.zip(S) ++ tau.toSeq.zip(Y) ++ Seq((tauAdjGrad, newAdjGrad)))
             .filter(_._2 != null): _*)

@@ -25,30 +25,30 @@ import org.apache.spark.util.RDDUtils
 import scala.collection.mutable.ArrayBuffer
 
 class DistributedVector(
-    val vecs: RDD[Vector],
-    val sizePerPart: Int,
-    val nParts: Int,
-    val nSize: Long) {
+                         val blocks: RDD[Vector],
+                         val sizePerBlock: Int,
+                         val numBlocks: Int,
+                         val size: Long) {
 
-  require(nParts > 0 && sizePerPart > 0 && nSize > 0 && (nParts - 1) * sizePerPart < nSize)
+  require(numBlocks > 0 && sizePerBlock > 0 && size > 0 && (numBlocks - 1) * sizePerBlock < size)
 
   def add(d: Double): DistributedVector = {
-    val vecs2 = vecs.map((vec: Vector) => {
+    val blocks2 = blocks.map((vec: Vector) => {
       Vectors.fromBreeze(vec.asBreeze + d)
     })
-    new DistributedVector(vecs2, sizePerPart, nParts, nSize)
+    new DistributedVector(blocks2, sizePerBlock, numBlocks, size)
   }
 
   def addScalVec(a: Double, dv2: DistributedVector): DistributedVector = {
-    require(sizePerPart == dv2.sizePerPart && nParts == dv2.nParts && nSize == dv2.nSize)
+    require(sizePerBlock == dv2.sizePerBlock && numBlocks == dv2.numBlocks && size == dv2.size)
 
-    val resVecs = vecs.zip(dv2.vecs).map {
+    val resBlocks = blocks.zip(dv2.blocks).map {
       case (vec1: Vector, vec2: Vector) =>
         val vec3 = vec1.copy
         BLAS.axpy(a, vec2, vec3)
         vec3
     }
-    new DistributedVector(resVecs, sizePerPart, nParts, nSize)
+    new DistributedVector(resBlocks, sizePerBlock, numBlocks, size)
   }
 
   def add(dv2: DistributedVector): DistributedVector = {
@@ -60,42 +60,42 @@ class DistributedVector(
   }
 
   def dot(dv2: DistributedVector): Double = {
-    require(sizePerPart == dv2.sizePerPart && nParts == dv2.nParts && nSize == dv2.nSize)
-    vecs.zip(dv2.vecs).map {
+    require(sizePerBlock == dv2.sizePerBlock && numBlocks == dv2.numBlocks && size == dv2.size)
+    blocks.zip(dv2.blocks).map {
       case (vec1: Vector, vec2: Vector) =>
         BLAS.dot(vec1, vec2)
     }.sum()
   }
 
   def scale(a: Double): DistributedVector = {
-    val vecs2 = vecs.map((vec: Vector) => {
+    val blocks2 = blocks.map((vec: Vector) => {
       val vec2 = vec.copy
       BLAS.scal(a, vec2)
       vec2
     })
-    new DistributedVector(vecs2, sizePerPart, nParts, nSize)
+    new DistributedVector(blocks2, sizePerBlock, numBlocks, size)
   }
 
   def norm(): Double = {
-    math.sqrt(vecs.map(Vectors.norm(_, 2)).map(x => x * x).sum())
+    math.sqrt(blocks.map(Vectors.norm(_, 2)).map(x => x * x).sum())
   }
   def persist(storageLevel: StorageLevel = StorageLevel.MEMORY_AND_DISK,
               eager: Boolean = true)
     : DistributedVector = {
-    vecs.persist(storageLevel)
+    blocks.persist(storageLevel)
     if (eager) {
-      vecs.count() // force eager cache.
+      blocks.count() // force eager cache.
     }
     this
   }
 
   def unpersist(): DistributedVector = {
-    vecs.unpersist()
+    blocks.unpersist()
     this
   }
 
   def toKVRdd: RDD[(Int, Vector)] = {
-    vecs.mapPartitionsWithIndex{
+    blocks.mapPartitionsWithIndex{
       case (pid: Int, iter: Iterator[Vector]) =>
         iter.map(v => (pid, v))
     }
@@ -103,83 +103,83 @@ class DistributedVector(
 
   def mapPartitionsWithIndex(f: (Int, Vector) => Vector) = {
     new DistributedVector(
-      vecs.mapPartitionsWithIndex{(pid: Int, iter: Iterator[Vector]) =>
+      blocks.mapPartitionsWithIndex{ (pid: Int, iter: Iterator[Vector]) =>
         iter.map(v => f(pid, v))
-      }, sizePerPart, nParts, nSize
+      }, sizePerBlock, numBlocks, size
     )
   }
 
   def compressed = mapPartitionsWithIndex((pid: Int, v: Vector) => v.compressed)
 
   def zipPartitions(dv2: DistributedVector)(f: (Vector, Vector) => Vector) = {
-    require(sizePerPart == dv2.sizePerPart && nParts == dv2.nParts)
+    require(sizePerBlock == dv2.sizePerBlock && numBlocks == dv2.numBlocks)
 
     new DistributedVector(
-      vecs.zip(dv2.vecs).map {
+      blocks.zip(dv2.blocks).map {
         case (vec1: Vector, vec2: Vector) =>
           f(vec1, vec2)
-      }, sizePerPart, nParts, nSize)
+      }, sizePerBlock, numBlocks, size)
   }
 
   def zipPartitionsWithIndex(dv2: DistributedVector, newSizePerPart: Int = 0, newSize: Long = 0)
                             (f: (Int, Vector, Vector) => Vector) = {
-    require(nParts == dv2.nParts)
+    require(numBlocks == dv2.numBlocks)
 
     new DistributedVector(
-      vecs.zip(dv2.vecs).mapPartitionsWithIndex(
+      blocks.zip(dv2.blocks).mapPartitionsWithIndex(
         (pid: Int, iter: Iterator[(Vector, Vector)]) => {
           iter.map {
             case (vec1: Vector, vec2: Vector) =>
               f(pid, vec1, vec2)
           }
         }),
-      if (newSizePerPart == 0) sizePerPart else newSizePerPart,
-      nParts,
-      if (newSize == 0) nSize else newSize)
+      if (newSizePerPart == 0) sizePerBlock else newSizePerPart,
+      numBlocks,
+      if (newSize == 0) size else newSize)
   }
 
   def zipPartitions(dv2: DistributedVector, dv3: DistributedVector)
                    (f: (Vector, Vector, Vector) => Vector) = {
-    require(sizePerPart == dv2.sizePerPart && nParts == dv2.nParts)
-    require(sizePerPart == dv3.sizePerPart && nParts == dv3.nParts)
+    require(sizePerBlock == dv2.sizePerBlock && numBlocks == dv2.numBlocks)
+    require(sizePerBlock == dv3.sizePerBlock && numBlocks == dv3.numBlocks)
 
     new DistributedVector(
-      vecs.zip(dv2.vecs).zip(dv3.vecs).map {
+      blocks.zip(dv2.blocks).zip(dv3.blocks).map {
         case ((vec1: Vector, vec2: Vector), vec3: Vector) =>
           f(vec1, vec2, vec3)
-      }, sizePerPart, nParts, nSize)
+      }, sizePerBlock, numBlocks, size)
   }
 
   def zipPartitionsWithIndex(dv2: DistributedVector, dv3: DistributedVector)
                    (f: (Int, Vector, Vector, Vector) => Vector) = {
-    require(sizePerPart == dv2.sizePerPart && nParts == dv2.nParts)
-    require(sizePerPart == dv3.sizePerPart && nParts == dv3.nParts)
+    require(sizePerBlock == dv2.sizePerBlock && numBlocks == dv2.numBlocks)
+    require(sizePerBlock == dv3.sizePerBlock && numBlocks == dv3.numBlocks)
 
     new DistributedVector(
-      vecs.zip(dv2.vecs).zip(dv3.vecs).mapPartitionsWithIndex(
+      blocks.zip(dv2.blocks).zip(dv3.blocks).mapPartitionsWithIndex(
         (pid: Int, iter: Iterator[((Vector, Vector), Vector)]) => {
           iter.map {
             case ((vec1: Vector, vec2: Vector), vec3: Vector) =>
               f(pid, vec1, vec2, vec3)
           }
-        }), sizePerPart, nParts, nSize)
+        }), sizePerBlock, numBlocks, size)
   }
 
   def toLocal: Vector = {
-    require(nSize < Int.MaxValue)
+    require(size < Int.MaxValue)
     val indicesBuff = new ArrayBuffer[Int]
     val valueBuff = new ArrayBuffer[Double]
-    vecs.zipWithIndex().collect().sortWith(_._2 < _._2).foreach {
+    blocks.zipWithIndex().collect().sortWith(_._2 < _._2).foreach {
       case (v: Vector, index: Long) =>
         val sv = v.toSparse
-        indicesBuff ++= sv.indices.map(_ + index.toInt * sizePerPart)
+        indicesBuff ++= sv.indices.map(_ + index.toInt * sizePerBlock)
         valueBuff ++= sv.values
     }
-    Vectors.sparse(nSize.toInt, indicesBuff.toArray, valueBuff.toArray).compressed
+    Vectors.sparse(size.toInt, indicesBuff.toArray, valueBuff.toArray).compressed
   }
 
   def isPersisted: Boolean = {
-    RDDUtils.isRDDPersisted(vecs)
+    RDDUtils.isRDDPersisted(blocks)
   }
 }
 
@@ -239,14 +239,14 @@ object DistributedVectors {
   def combine(vlist: (Double, DistributedVector)*): DistributedVector = {
     require(vlist.nonEmpty)
     val vecsList = vlist.map{case (a: Double, v: DistributedVector) =>
-      v.vecs.mapPartitionsWithIndex((pid: Int, iter: Iterator[Vector]) => {
+      v.blocks.mapPartitionsWithIndex((pid: Int, iter: Iterator[Vector]) => {
         iter.map((v: Vector) => (pid, (a, v)))
       })
     }
     val firstDV = vlist(0)._2
-    val nParts = firstDV.nParts
-    val sizePerPart = firstDV.sizePerPart
-    val nSize = firstDV.nSize
+    val nParts = firstDV.numBlocks
+    val sizePerPart = firstDV.sizePerBlock
+    val nSize = firstDV.size
     val combinedVec = vecsList.head.context.union(vecsList).aggregateByKey(
       new AggrScalVec,
       new DistributedVectorPartitioner(nParts)

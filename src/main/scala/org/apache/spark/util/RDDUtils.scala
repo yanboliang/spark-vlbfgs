@@ -23,24 +23,6 @@ import org.apache.spark.storage.{RDDBlockId, StorageLevel, StorageUtils}
 
 private[spark] object RDDUtils {
 
-  /**
-   * Check whether the rdd is actually persisted. (because after calling `rdd.persist`
-   * the rdd is lazy persisted)
-   *
-   * Note:
-   *  this method use spark internal method, only used for debug.
-   *  require application live ui enabled.
-   *
-   * @param rdd
-   */
-  def isRDDRealPersisted[T](rdd: RDD[T]): Boolean = {
-    if (rdd.partitions.length == 0)
-      return true
-
-    println(s"check isRDDRealPersisted: ${rdd.id}")
-    rdd.sparkContext.ui.get.storageListener.rddInfoList.map(_.id).contains(rdd.id)
-  }
-
   def isRDDPersisted[T](rdd: RDD[T]): Boolean = {
     rdd.getStorageLevel != StorageLevel.NONE
   }

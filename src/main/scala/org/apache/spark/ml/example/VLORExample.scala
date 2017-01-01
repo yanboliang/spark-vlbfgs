@@ -33,9 +33,8 @@ object VLORExample {
     var rowPartitions: Int = 3
     var regParam: Double = 0.5
     var fitIntercept: Boolean = true
-
-    var eagerPersist = true
-    var openUI = true
+    var eagerPersist: Boolean = true
+    var elasticNetParam = 1.0
 
     var dataPath: String = null
 
@@ -50,29 +49,36 @@ object VLORExample {
       rowPartitions = args(5).toInt
       regParam = args(6).toDouble
       fitIntercept = args(7).toBoolean
-
       eagerPersist = args(8).toBoolean
-      openUI = args(9).toBoolean
+      elasticNetParam = args(9).toDouble
 
       dataPath = args(10)
 
     } catch {
       case _: Throwable =>
-        println("Wrong params.")
-        println("Params: "
+        println("Param list: "
           + "maxIter dimension colsPerBlock rowsPerBlock colPartitions rowPartitions"
-          + " regParam fitIntercept eagerPersist openUI dataPath")
+          + " regParam fitIntercept elasticNetParam dataPath")
+        println("parameter description:" +
+          "\nmaxIter          max iteration number for VLogisticRegression" +
+          "\ndimension        training data dimension number" +
+          "\ncolsPerBlock     column number of each block in feature block matrix" +
+          "\nrowsPerBlock     row number of each block in feature block matrix" +
+          "\ncolPartitions    column partition number of feature block matrix" +
+          "\nrowPartitions    row partition number of feature block matrix" +
+          "\nregParam         regularization parameter" +
+          "\nfitIntercept     whether to train intercept, true or false" +
+          "\neagerPersist     whether to eager persist distributed vector, true or false" +
+          "\nelasticNetParam  elastic net parameter for regulization" +
+          "\ndataPath         training data path on HDFS")
+
         System.exit(-1)
     }
 
     val spark = SparkSession
       .builder()
       .appName("VLogistic Regression Example")
-      .config("spark.ui.enabled", openUI)
-      .config("spark.ui.port", 8899)
       .getOrCreate()
-
-    if (openUI) println("UI port: 8899")
 
     val sc = spark.sparkContext
 
@@ -91,6 +97,7 @@ object VLORExample {
         .setRegParam(regParam)
         .setFitIntercept(fitIntercept)
         .setEagerPersist(eagerPersist)
+        .setElasticNetParam(elasticNetParam)
 
       val vmodel = vtrainer.fit(dataset)
 

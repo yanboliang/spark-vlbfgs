@@ -37,7 +37,12 @@ To be supported:
 spark-vlbfgs is built using [Apache Maven](http://maven.apache.org/).
 To build spark-vlbfgs and its example programs, run:
     
-    mvn -DskipTests clean package
+    mvn clean package -DskipTests
+
+by default this project will be built against spark-2.0.0 with scala-2.11,
+if you want to specify other version, use maven `-D` parameter such as:
+
+    mvn clean package -Dscala.binary.version=2.10 -Dspark.version=2.0.0
 
 then run example:
 
@@ -45,8 +50,8 @@ then run example:
        --master yarn
        --num-executors 10
        --executor-cores 2
-       --class org.apache.spark.ml.example.RosenbrockExample
-       /path/to/spark-vlbfgs-0.1-SNAPSHOT.jar
+       --class org.apache.spark.ml.example.VLORExample
+       /path/to/spark-vlbfgs-0.1-SNAPSHOT.jar [paramlist]
 
 ## Example
 
