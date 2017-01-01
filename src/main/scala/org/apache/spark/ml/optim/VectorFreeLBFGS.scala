@@ -26,6 +26,8 @@ import org.apache.spark.ml.linalg.{DistributedVector => DV, DistributedVectors =
 import org.apache.spark.ml.util.VUtils
 import org.apache.spark.storage.StorageLevel
 
+import scala.collection.mutable.ArrayBuffer
+
 /**
  * Implements vector free LBFGS
  *
@@ -132,7 +134,7 @@ class VectorFreeLBFGS(
     val (value, grad) = fn.calculate(x)
     val (adjValue, adjGrad) = adjust(x, grad, value)
     State(x, value, grad, adjValue, adjGrad, 0, adjValue,
-      IndexedSeq(Double.PositiveInfinity), NotConvergedFlag)
+      IndexedSeq(Double.PositiveInfinity), NotConvergedFlag, IndexedSeq())
   }
 
   // VectorFreeOWLQN will override this method
@@ -143,7 +145,8 @@ class VectorFreeLBFGS(
 
   // the `fn` is responsible for output `grad` persist.
   // the `init` must be persisted before this interface called.
-  def iterations(fn: VDiffFunction, init: DV): Iterator[State] = {
+  def iterations(fn: VDiffFunction, init: DV, shouldCheckpoint: Int => Boolean = _ => false)
+    : Iterator[State] = {
     val history: History = HistoryImpl(m, eagerPersist)
 
     val state0 = initialState(fn, init)
@@ -161,15 +164,32 @@ class VectorFreeLBFGS(
         }
         state.adjustedGradient = null
 
-        val newState = State(x, value, grad, adjValue, adjGrad, state.iter + 1,
-          state.initialAdjVal, (state.fValHistory :+ value).takeRight(fvalMemory),
-          NotConvergedFlag)
+        val newIter = state.iter + 1
+
+        var checkpointHistory = state.checkpointHistory
+
+        if (shouldCheckpoint(newIter)) {
+          x.checkpoint(true)
+          grad.checkpoint(true)
+          checkpointHistory = checkpointHistory :+ x :+ grad
+
+          if (adjGrad != grad) {
+            adjGrad.checkpoint(true)
+            checkpointHistory = checkpointHistory :+ adjGrad
+          }
+        }
+
+        val newState = State(x, value, grad, adjValue,
+          adjGrad, newIter, state.initialAdjVal,
+          (state.fValHistory :+ value).takeRight(fvalMemory),
+          NotConvergedFlag, checkpointHistory)
 
         newState.convergenceFlag = checkConvergence(newState)
         newState
       } catch {
         case x: Exception =>
           state.convergenceFlag = SearchFailedFlag
+          logError(s"LBFGS search failed: ${x.toString}")
           x.printStackTrace(System.err)
           state
       }
@@ -311,7 +331,8 @@ object VectorFreeLBFGS {
       iter: Int,
       initialAdjVal: Double,
       fValHistory: IndexedSeq[Double],
-      var convergenceFlag: Int) {
+      var convergenceFlag: Int,
+      checkpointHistory: IndexedSeq[DV]) {
   }
 
   trait History {
@@ -385,15 +406,8 @@ object VectorFreeLBFGS {
         var newS: DV = null
         var newY: DV = null
 
-        // if `eagerPersist` is true, the sub operation may take some time to finish so use
-        // concurrent execution here.
-        VUtils.concurrentExecuteTasks[String](
-          newSYTaskList, LBFGS_threadPool, task => task match {
-          case "S" =>
-            newS = newX.sub(lastX).persist(StorageLevel.MEMORY_AND_DISK, eager = eagerPersist)
-          case "Y" =>
-            newY = newGrad.sub(lastGrad).persist(StorageLevel.MEMORY_AND_DISK, eager = eagerPersist)
-        })
+        newS = newX.sub(lastX).persist(StorageLevel.MEMORY_AND_DISK, eager = false)
+        newY = newGrad.sub(lastGrad).persist(StorageLevel.MEMORY_AND_DISK, eager = false)
 
         // push `newS` and `newY` into LBFGS S & Y vector history.
         push(S, newS)

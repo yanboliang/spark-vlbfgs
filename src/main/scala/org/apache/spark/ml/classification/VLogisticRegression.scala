@@ -18,11 +18,9 @@
 package org.apache.spark.ml.classification
 
 import scala.collection.mutable.ArrayBuffer
-
 import org.apache.spark.internal.Logging
 import org.apache.spark.ml.feature.Instance
-import org.apache.spark.ml.linalg.{BLAS, DenseVector, DistributedVectorPartitioner, SparseMatrix,
-  SparseVector, Vector, Vectors, DistributedVector => DV, DistributedVectors => DVs}
+import org.apache.spark.ml.linalg.{BLAS, DenseVector, DistributedVectorPartitioner, SparseMatrix, SparseVector, Vector, Vectors, DistributedVector => DV, DistributedVectors => DVs}
 import org.apache.spark.ml.optim.{VDiffFunction, VectorFreeLBFGS, VectorFreeOWLQN}
 import org.apache.spark.ml.param.{BooleanParam, IntParam, ParamMap, ParamValidators}
 import org.apache.spark.ml.param.shared._
@@ -38,13 +36,15 @@ import org.apache.spark.sql.types.DoubleType
 import org.apache.spark.storage.StorageLevel
 import org.apache.spark.util.RDDUtils
 
+import scala.collection.mutable
+
 /**
  * Params for vector-free logistic regression.
  */
 private[classification] trait VLogisticRegressionParams
   extends ProbabilisticClassifierParams with HasRegParam with HasElasticNetParam
     with HasMaxIter with HasTol with HasStandardization with HasWeightCol with HasThreshold
-    with HasFitIntercept
+    with HasFitIntercept with HasCheckpointInterval
 
 /**
  * Logistic regression.
@@ -211,6 +211,10 @@ class VLogisticRegression(override val uid: String)
   def setElasticNetParam(value: Double): this.type = set(elasticNetParam, value)
 
   setDefault(elasticNetParam -> 0.0)
+
+  def setCheckpointInterval(interval: Int): this.type = set(checkpointInterval, interval)
+
+  setDefault(checkpointInterval, 5)
 
   override protected[spark] def train(dataset: Dataset[_]): VLogisticRegressionModel = {
     logInfo("Begin training VLogisticRegression")
@@ -432,16 +436,20 @@ class VLogisticRegression(override val uid: String)
     }
     initCoeffs.persist(StorageLevel.MEMORY_AND_DISK, eager = $(eagerPersist))
 
-    val states = optimizer.iterations(costFun, initCoeffs)
-
     var state: optimizer.State = null
-    var iterCnt = 0
+    val shouldCheckpoint: Int => Boolean = (iter) => {
+      if (sc.checkpointDir.isEmpty && $(checkpointInterval) != -1)
+        logWarning("Cannot checkpoint because checkpointDir is not set.")
+      sc.checkpointDir.isDefined && $(checkpointInterval) != -1 &&
+        (iter % $(checkpointInterval) == 0)
+    }
+    val states = optimizer.iterations(costFun, initCoeffs, shouldCheckpoint)
+
     while (states.hasNext) {
-      iterCnt += 1
       val startTime = System.currentTimeMillis()
       state = states.next()
       val endTime = System.currentTimeMillis()
-      logInfo(s"VLogisticRegression iter ${iterCnt} finish, cost ${endTime - startTime}ms.")
+      logInfo(s"VLogisticRegression iter ${state.iter} finish, cost ${endTime - startTime}ms.")
     }
     if (state == null) {
       val msg = s"${optimizer.getClass.getName} failed."
@@ -489,6 +497,7 @@ class VLogisticRegression(override val uid: String)
 
     val interceptVal = interceptValAccu.value
     val model = copyValues(new VLogisticRegressionModel(uid, coeffs.toLocal, interceptVal))
+    state.checkpointHistory.foreach(_.deleteCheckpoint())
     model
   }
 

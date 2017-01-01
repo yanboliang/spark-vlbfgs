@@ -17,6 +17,8 @@
 
 package org.apache.spark.ml.linalg
 
+import org.apache.spark.internal.Logging
+import org.apache.hadoop.fs.Path
 import org.apache.spark.{Partitioner, SparkContext}
 import org.apache.spark.rdd.RDD
 import org.apache.spark.storage.StorageLevel
@@ -25,10 +27,10 @@ import org.apache.spark.util.RDDUtils
 import scala.collection.mutable.ArrayBuffer
 
 class DistributedVector(
-                         val blocks: RDD[Vector],
-                         val sizePerBlock: Int,
-                         val numBlocks: Int,
-                         val size: Long) {
+    var blocks: RDD[Vector],
+    val sizePerBlock: Int,
+    val numBlocks: Int,
+    val size: Long) extends Logging {
 
   require(numBlocks > 0 && sizePerBlock > 0 && size > 0 && (numBlocks - 1) * sizePerBlock < size)
 
@@ -79,6 +81,7 @@ class DistributedVector(
   def norm(): Double = {
     math.sqrt(blocks.map(Vectors.norm(_, 2)).map(x => x * x).sum())
   }
+
   def persist(storageLevel: StorageLevel = StorageLevel.MEMORY_AND_DISK,
               eager: Boolean = true)
     : DistributedVector = {
@@ -180,6 +183,28 @@ class DistributedVector(
 
   def isPersisted: Boolean = {
     RDDUtils.isRDDPersisted(blocks)
+  }
+
+  def checkpoint(isRDDAlreadyComputed: Boolean): Unit = {
+    assert(isPersisted)
+    if (isRDDAlreadyComputed) {
+      val checkpointBlocks = blocks.map(x => x)
+      checkpointBlocks.persist().checkpoint()
+      blocks = checkpointBlocks
+    } else {
+      blocks.checkpoint()
+    }
+  }
+
+  def deleteCheckpoint(): Unit = {
+    try {
+      val checkpointFile = new Path(blocks.getCheckpointFile.get)
+      checkpointFile.getFileSystem(blocks.sparkContext.hadoopConfiguration)
+        .delete(checkpointFile, true)
+    } catch {
+      case e: Exception =>
+        logWarning(s"delete checkpoint fail: RDD_${blocks.id}")
+    }
   }
 }
 

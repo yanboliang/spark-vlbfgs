@@ -81,6 +81,7 @@ object VLORExample {
       .getOrCreate()
 
     val sc = spark.sparkContext
+    sc.setCheckpointDir("/tmp/VLogisticRegression/checkpoint")
 
     try {
       println(s"begin load data from $dataPath")
@@ -102,7 +103,10 @@ object VLORExample {
       val vmodel = vtrainer.fit(dataset)
 
       println(s"Vector-free logistic regression coefficients: ${vmodel.coefficients}")
-    } finally {
+    } catch {
+      case e: Exception =>
+        e.printStackTrace()
+    }finally {
       println("Press ENTER to exit.")
       System.in.read()
     }
