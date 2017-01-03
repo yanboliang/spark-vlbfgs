@@ -110,7 +110,8 @@ class VUtilsSuite extends SparkFunSuite with MLlibTestSparkContext {
     )).toDense == Matrices.dense(3, 2, Array(1.0, 3.0, 7.0, 2.0, 8.0, 9.0)))
   }
 
-  def testBlockMatrixHorzZipVecFunc(rows: Int, cols: Int, rowsPerPart: Int, colsPerPart: Int) = {
+  def testBlockMatrixHorzZipVecFunc(rows: Int, cols: Int, rowsPerPart: Int, colsPerPart: Int,
+      shuffleRdd2: Boolean) = {
     val arrMatrix = Array.tabulate(rows * cols) { idx =>
       val rowIdx = idx % rows
       val colIdx = idx / rows
@@ -141,7 +142,8 @@ class VUtilsSuite extends SparkFunSuite with MLlibTestSparkContext {
     })
   }
 
-  def testBlockMatrixVertZipVecFunc(rows: Int, cols: Int, rowsPerPart: Int, colsPerPart: Int) = {
+  def testBlockMatrixVertZipVecFunc(rows: Int, cols: Int, rowsPerPart: Int, colsPerPart: Int,
+      shuffleRdd2: Boolean) = {
     val arrMatrix = Array.tabulate(rows * cols) { idx =>
       val rowIdx = idx % rows
       val colIdx = idx / rows
@@ -173,31 +175,55 @@ class VUtilsSuite extends SparkFunSuite with MLlibTestSparkContext {
   }
 
   test("blockMatrixHorzZipVec") {
-    testBlockMatrixHorzZipVecFunc(5, 4, 2, 3)
-    testBlockMatrixHorzZipVecFunc(8, 6, 2, 3)
-    testBlockMatrixHorzZipVecFunc(3, 5, 3, 5)
-    testBlockMatrixHorzZipVecFunc(15, 4, 6, 1)
-    testBlockMatrixHorzZipVecFunc(15, 3, 6, 2)
+    testBlockMatrixHorzZipVecFunc(5, 4, 2, 3, false)
+    testBlockMatrixHorzZipVecFunc(8, 6, 2, 3, false)
+    testBlockMatrixHorzZipVecFunc(3, 5, 3, 5, false)
+    testBlockMatrixHorzZipVecFunc(15, 4, 6, 1, false)
+    testBlockMatrixHorzZipVecFunc(15, 3, 6, 2, false)
 
-    testBlockMatrixHorzZipVecFunc(4, 5, 3, 2)
-    testBlockMatrixHorzZipVecFunc(6, 8, 3, 2)
-    testBlockMatrixHorzZipVecFunc(5, 3, 5, 3)
-    testBlockMatrixHorzZipVecFunc(4, 15, 1, 6)
-    testBlockMatrixHorzZipVecFunc(3, 15, 2, 6)
+    testBlockMatrixHorzZipVecFunc(4, 5, 3, 2, false)
+    testBlockMatrixHorzZipVecFunc(6, 8, 3, 2, false)
+    testBlockMatrixHorzZipVecFunc(5, 3, 5, 3, false)
+    testBlockMatrixHorzZipVecFunc(4, 15, 1, 6, false)
+    testBlockMatrixHorzZipVecFunc(3, 15, 2, 6, false)
+
+    testBlockMatrixHorzZipVecFunc(5, 4, 2, 3, true)
+    testBlockMatrixHorzZipVecFunc(8, 6, 2, 3, true)
+    testBlockMatrixHorzZipVecFunc(3, 5, 3, 5, true)
+    testBlockMatrixHorzZipVecFunc(15, 4, 6, 1, true)
+    testBlockMatrixHorzZipVecFunc(15, 3, 6, 2, true)
+
+    testBlockMatrixHorzZipVecFunc(4, 5, 3, 2, true)
+    testBlockMatrixHorzZipVecFunc(6, 8, 3, 2, true)
+    testBlockMatrixHorzZipVecFunc(5, 3, 5, 3, true)
+    testBlockMatrixHorzZipVecFunc(4, 15, 1, 6, true)
+    testBlockMatrixHorzZipVecFunc(3, 15, 2, 6, true)
   }
 
   test("blockMatrixVertZipVec") {
-    testBlockMatrixVertZipVecFunc(5, 4, 2, 3)
-    testBlockMatrixVertZipVecFunc(8, 6, 2, 3)
-    testBlockMatrixVertZipVecFunc(3, 5, 3, 5)
-    testBlockMatrixVertZipVecFunc(15, 4, 6, 1)
-    testBlockMatrixVertZipVecFunc(15, 3, 6, 2)
+    testBlockMatrixVertZipVecFunc(5, 4, 2, 3, false)
+    testBlockMatrixVertZipVecFunc(8, 6, 2, 3, false)
+    testBlockMatrixVertZipVecFunc(3, 5, 3, 5, false)
+    testBlockMatrixVertZipVecFunc(15, 4, 6, 1, false)
+    testBlockMatrixVertZipVecFunc(15, 3, 6, 2, false)
 
-    testBlockMatrixVertZipVecFunc(4, 5, 3, 2)
-    testBlockMatrixVertZipVecFunc(6, 8, 3, 2)
-    testBlockMatrixVertZipVecFunc(5, 3, 5, 3)
-    testBlockMatrixVertZipVecFunc(4, 15, 1, 6)
-    testBlockMatrixVertZipVecFunc(3, 15, 2, 6)
+    testBlockMatrixVertZipVecFunc(4, 5, 3, 2, false)
+    testBlockMatrixVertZipVecFunc(6, 8, 3, 2, false)
+    testBlockMatrixVertZipVecFunc(5, 3, 5, 3, false)
+    testBlockMatrixVertZipVecFunc(4, 15, 1, 6, false)
+    testBlockMatrixVertZipVecFunc(3, 15, 2, 6, false)
+
+    testBlockMatrixVertZipVecFunc(5, 4, 2, 3, true)
+    testBlockMatrixVertZipVecFunc(8, 6, 2, 3, true)
+    testBlockMatrixVertZipVecFunc(3, 5, 3, 5, true)
+    testBlockMatrixVertZipVecFunc(15, 4, 6, 1, true)
+    testBlockMatrixVertZipVecFunc(15, 3, 6, 2, true)
+
+    testBlockMatrixVertZipVecFunc(4, 5, 3, 2, true)
+    testBlockMatrixVertZipVecFunc(6, 8, 3, 2, true)
+    testBlockMatrixVertZipVecFunc(5, 3, 5, 3, true)
+    testBlockMatrixVertZipVecFunc(4, 15, 1, 6, true)
+    testBlockMatrixVertZipVecFunc(3, 15, 2, 6, true)
   }
 
   test("vector summarizer") {

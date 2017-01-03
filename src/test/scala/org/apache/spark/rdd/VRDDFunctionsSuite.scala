@@ -30,7 +30,7 @@ class VRDDFunctionsSuite extends SparkFunSuite with MLlibTestSparkContext {
     super.beforeAll()
   }
 
-  test("mapJoinPartitions") {
+  def testMapJoinPartitions(shuffleRdd2: Boolean): Unit = {
     val sc = spark.sparkContext
     val rdd1 = sc.parallelize(Array.tabulate(81) {
       idx => {
@@ -44,7 +44,7 @@ class VRDDFunctionsSuite extends SparkFunSuite with MLlibTestSparkContext {
       .partitionBy(new DistributedVectorPartitioner(9)).cache()
     rdd2.count()
 
-    val rddr = rdd1.mapJoinPartition(rdd2)(
+    val rddr = rdd1.mapJoinPartition(rdd2, shuffleRdd2)(
       (x: Int) => {
         val blockColIdx = x / 3
         val pos = blockColIdx * 3
@@ -66,5 +66,13 @@ class VRDDFunctionsSuite extends SparkFunSuite with MLlibTestSparkContext {
       (7, "(6,(6,6)),(7,(7,7)),(8,(8,8))"),
       (8, "(6,(6,6)),(7,(7,7)),(8,(8,8))")
     ))
+  }
+
+  test("mapJoinPartitions V1") {
+    testMapJoinPartitions(false)
+  }
+
+  test("mapJoinPartitions V2") {
+    testMapJoinPartitions(true)
   }
 }
