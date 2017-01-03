@@ -40,4 +40,15 @@ private[spark] object VRDDFunctions {
   implicit def fromRDD[A: ClassTag](rdd: RDD[A]): VRDDFunctions[A] = {
     new VRDDFunctions(rdd)
   }
+
+  def zipMultiRDDs[A: ClassTag, V: ClassTag](rddList: List[RDD[A]])
+      (f: (List[Iterator[A]]) => Iterator[V]) = {
+    assert(rddList.length > 1)
+    rddList(0).withScope{
+      val sc = rddList(0).sparkContext
+      val cleanF = sc.clean(f)
+      new MultiZippedPartitionsRDD[A, V](sc, cleanF, rddList)
+    }
+  }
+
 }

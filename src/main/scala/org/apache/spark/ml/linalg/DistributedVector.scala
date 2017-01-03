@@ -19,8 +19,9 @@ package org.apache.spark.ml.linalg
 
 import org.apache.spark.internal.Logging
 import org.apache.hadoop.fs.Path
+import org.apache.spark.ml.util.VUtils
 import org.apache.spark.{Partitioner, SparkContext}
-import org.apache.spark.rdd.RDD
+import org.apache.spark.rdd.{RDD, VRDDFunctions}
 import org.apache.spark.storage.StorageLevel
 import org.apache.spark.util.RDDUtils
 
@@ -262,25 +263,28 @@ object DistributedVectors {
   }
 
   def combine(vlist: (Double, DistributedVector)*): DistributedVector = {
-    require(vlist.nonEmpty)
-    val vecsList = vlist.map{case (a: Double, v: DistributedVector) =>
-      v.blocks.mapPartitionsWithIndex((pid: Int, iter: Iterator[Vector]) => {
-        iter.map((v: Vector) => (pid, (a, v)))
-      })
-    }
+    require(vlist.length > 1)
+
     val firstDV = vlist(0)._2
-    val nParts = firstDV.numBlocks
-    val sizePerPart = firstDV.sizePerBlock
-    val nSize = firstDV.size
-    val combinedVec = vecsList.head.context.union(vecsList).aggregateByKey(
-      new AggrScalVec,
-      new DistributedVectorPartitioner(nParts)
-    )((asv: AggrScalVec, sv: (Double, Vector)) => asv.add(sv),
-      (asv: AggrScalVec, asv2: AggrScalVec) => asv.merge(asv2)
-    ).map{
-      case (k, v) => v.vec
+    val rddList = vlist.map(_._2.blocks).toList
+    val coeffs = vlist.map(_._1)
+
+    val combinedVec = VRDDFunctions.zipMultiRDDs(rddList) {
+      iterList: List[Iterator[Vector]] =>
+        var sumVec: Vector = null
+        var i = 0
+        while (i < iterList.size) {
+          val v = iterList(i).next()
+          if (sumVec == null) {
+            sumVec = Vectors.zeros(v.size)
+          }
+          BLAS.axpy(coeffs(i), v, sumVec)
+          i += 1
+        }
+        iterList.foreach(iter => assert(!(iter.hasNext)))
+        Iterator(sumVec)
     }
 
-    new DistributedVector(combinedVec, sizePerPart, nParts, nSize)
+    new DistributedVector(combinedVec, firstDV.sizePerBlock, firstDV.numBlocks, firstDV.size)
   }
 }
