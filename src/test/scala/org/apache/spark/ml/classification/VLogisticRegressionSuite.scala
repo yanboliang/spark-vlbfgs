@@ -210,6 +210,7 @@ class VLogisticRegressionSuite extends SparkFunSuite with MLlibTestSparkContext 
       .setRegParam(0.0)
       .setStandardization(true)
     val model = trainer.fit(testData1)
+    logInfo(s"LogisticRegression total iterations: ${model.summary.totalIterations}")
 
     println(s"VLogisticRegression coefficients: ${vmodel.coefficients}\n" +
       s"LogisticRegression coefficients: ${model.coefficients}")
@@ -232,6 +233,7 @@ class VLogisticRegressionSuite extends SparkFunSuite with MLlibTestSparkContext 
       .setRegParam(0.0)
       .setStandardization(true)
     val model = trainer.fit(testData1)
+    logInfo(s"LogisticRegression total iterations: ${model.summary.totalIterations}")
 
     println(s"VLogisticRegression coefficients: ${vmodel.coefficients}\n" +
       s"LogisticRegression coefficients: ${model.coefficients}")
@@ -258,6 +260,7 @@ class VLogisticRegressionSuite extends SparkFunSuite with MLlibTestSparkContext 
       .setRegParam(0.8)
       .setStandardization(true)
     val model = trainer.fit(testData1)
+    logInfo(s"LogisticRegression total iterations: ${model.summary.totalIterations}")
 
     println(s"VLogisticRegression coefficients: ${vmodel.coefficients}\n" +
       s"LogisticRegression coefficient: ${model.coefficients}")
@@ -282,6 +285,7 @@ class VLogisticRegressionSuite extends SparkFunSuite with MLlibTestSparkContext 
       .setRegParam(0.8)
       .setStandardization(false)
     val model = trainer.fit(testData1)
+    logInfo(s"LogisticRegression total iterations: ${model.summary.totalIterations}")
 
     println(s"VLogisticRegression coefficients: ${vmodel.coefficients}\n" +
       s"LogisticRegression coefficient: ${model.coefficients}")
@@ -310,6 +314,7 @@ class VLogisticRegressionSuite extends SparkFunSuite with MLlibTestSparkContext 
       .setElasticNetParam(1.0)
       .setStandardization(true)
     val model = trainer.fit(testData1)
+    logInfo(s"LogisticRegression total iterations: ${model.summary.totalIterations}")
 
     println(s"VLogisticRegression coefficients: ${vmodel.coefficients}\n" +
       s"LogisticRegression coefficient: ${model.coefficients}")
@@ -338,6 +343,7 @@ class VLogisticRegressionSuite extends SparkFunSuite with MLlibTestSparkContext 
       .setElasticNetParam(1.0)
       .setStandardization(false)
     val model = trainer.fit(testData1)
+    logInfo(s"LogisticRegression total iterations: ${model.summary.totalIterations}")
 
     println(s"VLogisticRegression coefficients: ${vmodel.coefficients}\n" +
       s"LogisticRegression coefficient: ${model.coefficients}")
@@ -364,6 +370,7 @@ class VLogisticRegressionSuite extends SparkFunSuite with MLlibTestSparkContext 
       .setElasticNetParam(0.6)
       .setStandardization(false)
     val model = trainer.fit(testData1)
+    logInfo(s"LogisticRegression total iterations: ${model.summary.totalIterations}")
 
     println(s"VLogisticRegression coefficients: ${vmodel.coefficients}\n" +
       s"LogisticRegression coefficient: ${model.coefficients}")
@@ -388,6 +395,7 @@ class VLogisticRegressionSuite extends SparkFunSuite with MLlibTestSparkContext 
       .setRegParam(0.0)
       .setStandardization(true)
     val model = trainer.fit(testData1WithIntecept)
+    logInfo(s"LogisticRegression total iterations: ${model.summary.totalIterations}")
 
     println(s"VLogisticRegression coefficients: ${vmodel.coefficients}\n" +
       s"LogisticRegression coefficients: ${model.coefficients}")
@@ -413,6 +421,7 @@ class VLogisticRegressionSuite extends SparkFunSuite with MLlibTestSparkContext 
       .setRegParam(0.0)
       .setStandardization(true)
     val model = trainer.fit(testData1WithIntecept)
+    logInfo(s"LogisticRegression total iterations: ${model.summary.totalIterations}")
 
     println(s"VLogisticRegression coefficients: ${vmodel.coefficients}\n" +
       s"LogisticRegression coefficients: ${model.coefficients}")
@@ -442,6 +451,7 @@ class VLogisticRegressionSuite extends SparkFunSuite with MLlibTestSparkContext 
       .setRegParam(0.8)
       .setStandardization(true)
     val model = trainer.fit(testData1WithIntecept)
+    logInfo(s"LogisticRegression total iterations: ${model.summary.totalIterations}")
 
     println(s"VLogisticRegression coefficients: ${vmodel.coefficients}\n" +
       s"LogisticRegression coefficient: ${model.coefficients}")
@@ -469,6 +479,7 @@ class VLogisticRegressionSuite extends SparkFunSuite with MLlibTestSparkContext 
       .setRegParam(0.8)
       .setStandardization(false)
     val model = trainer.fit(testData1WithIntecept)
+    logInfo(s"LogisticRegression total iterations: ${model.summary.totalIterations}")
 
     println(s"VLogisticRegression coefficients: ${vmodel.coefficients}\n" +
       s"LogisticRegression coefficient: ${model.coefficients}")
@@ -500,6 +511,7 @@ class VLogisticRegressionSuite extends SparkFunSuite with MLlibTestSparkContext 
       .setElasticNetParam(1.0)
       .setStandardization(true)
     val model = trainer.fit(testData1WithIntecept)
+    logInfo(s"LogisticRegression total iterations: ${model.summary.totalIterations}")
 
     println(s"VLogisticRegression coefficients: ${vmodel.coefficients}\n" +
       s"LogisticRegression coefficient: ${model.coefficients}")
@@ -531,6 +543,7 @@ class VLogisticRegressionSuite extends SparkFunSuite with MLlibTestSparkContext 
       .setElasticNetParam(1.0)
       .setStandardization(false)
     val model = trainer.fit(testData1WithIntecept)
+    logInfo(s"LogisticRegression total iterations: ${model.summary.totalIterations}")
 
     println(s"VLogisticRegression coefficients: ${vmodel.coefficients}\n" +
       s"LogisticRegression coefficient: ${model.coefficients}")
@@ -560,6 +573,7 @@ class VLogisticRegressionSuite extends SparkFunSuite with MLlibTestSparkContext 
       .setElasticNetParam(0.6)
       .setStandardization(false)
     val model = trainer.fit(testData1WithIntecept)
+    logInfo(s"LogisticRegression total iterations: ${model.summary.totalIterations}")
 
     println(s"VLogisticRegression coefficients: ${vmodel.coefficients}\n" +
       s"LogisticRegression coefficient: ${model.coefficients}")
