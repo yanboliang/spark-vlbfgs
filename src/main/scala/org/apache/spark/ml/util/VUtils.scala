@@ -171,6 +171,8 @@ private[ml] object VUtils {
     }.collect()
   }
 
+  final val mapJoinPartitionsShuffleRdd2 =
+    System.getProperty("vflbfgs.mapJoinPartitions.shuffleRdd2", "true").toBoolean
 
   def blockMatrixHorzZipVec[T: ClassTag](
       blockMatrixRDD: RDD[((Int, Int), SparseMatrix)],
@@ -180,7 +182,7 @@ private[ml] object VUtils {
   ): RDD[((Int, Int), T)] = {
     import org.apache.spark.rdd.VRDDFunctions._
     require(gridPartitioner.cols == dvec.numBlocks)
-    blockMatrixRDD.mapJoinPartition(dvec.blocks)(
+    blockMatrixRDD.mapJoinPartition(dvec.blocks, mapJoinPartitionsShuffleRdd2)(
       (pid: Int) => {  // pid is the partition ID of blockMatrix RDD
         val colPartId = gridPartitioner.colPartId(pid)
         val startIdx = colPartId * gridPartitioner.colsPerPart
@@ -212,7 +214,7 @@ private[ml] object VUtils {
   ): RDD[((Int, Int), T)] = {
     import org.apache.spark.rdd.VRDDFunctions._
     require(gridPartitioner.rows == dvec.numBlocks)
-    blockMatrixRDD.mapJoinPartition(dvec.blocks)(
+    blockMatrixRDD.mapJoinPartition(dvec.blocks, mapJoinPartitionsShuffleRdd2)(
       (pid: Int) => {
         val rowPartId = gridPartitioner.rowPartId(pid)
         val startIdx = rowPartId * gridPartitioner.rowsPerPart

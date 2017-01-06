@@ -37,6 +37,7 @@ object VLORExample {
     var elasticNetParam = 1.0
 
     var dataPath: String = null
+    var shuffleRDD2: Boolean = true
 
     try {
       maxIter = args(0).toInt
@@ -53,7 +54,6 @@ object VLORExample {
       elasticNetParam = args(9).toDouble
 
       dataPath = args(10)
-
     } catch {
       case _: Throwable =>
         println("Param list: "
