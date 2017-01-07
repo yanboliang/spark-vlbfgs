@@ -21,7 +21,7 @@ import java.util.Random
 
 import breeze.linalg.{DenseVector => BDV}
 import org.apache.spark.SparkContext
-import org.apache.spark.ml.linalg.DistributedVector
+import org.apache.spark.ml.linalg.distributed.DistributedVector
 import org.apache.spark.ml.optim.{VDiffFunction, VectorFreeLBFGS}
 import org.apache.spark.ml.util.VUtils
 import org.apache.spark.sql.SparkSession

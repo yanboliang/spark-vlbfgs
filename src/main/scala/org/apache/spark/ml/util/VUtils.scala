@@ -25,6 +25,7 @@ import org.apache.spark.Partitioner
 import scala.collection.mutable.ArrayBuffer
 import org.apache.spark.SparkContext
 import org.apache.spark.ml.linalg._
+import org.apache.spark.ml.linalg.distributed.{DistributedVector, DistributedVectorPartitioner}
 import org.apache.spark.rdd.RDD
 import org.apache.spark.util.Utils
 
@@ -121,6 +122,22 @@ private[ml] object VUtils {
     futureArr.map(_.get())
   }
 
+  /**
+   * Generate a zipWithIndex iterator, avoid index value overflowing problem
+   * in scala's zipWithIndex
+   */
+  def getIteratorZipWithIndex[T](iterator: Iterator[T], startIndex: Long): Iterator[(Long, T)] = {
+    new Iterator[(Long, T)] {
+      require(startIndex >= 0, "startIndex should be >= 0.")
+      var index: Long = startIndex - 1L
+      def hasNext: Boolean = iterator.hasNext
+      def next(): (Long, T) = {
+        index += 1L
+        (index, iterator.next())
+      }
+    }
+  }
+
   def zipRDDWithIndex[T: ClassTag](
       partitionSizes: Array[Long],
       rdd: RDD[T]): RDD[(Long, T)] = {
@@ -129,9 +146,7 @@ private[ml] object VUtils {
 
     rdd.mapPartitionsWithIndex { case (partIndex, iter) =>
       val startIndex = bcStartIndices.value(partIndex)
-      iter.zipWithIndex.map { x =>
-        (startIndex + x._2, x._1)
-      }
+      VUtils.getIteratorZipWithIndex(iter, startIndex)
     }
   }
 
@@ -169,170 +184,6 @@ private[ml] object VUtils {
       case (pid: Int, iter: Iterator[T]) =>
         iter.map((pid, _))
     }.collect()
-  }
-
-  final val mapJoinPartitionsShuffleRdd2 =
-    System.getProperty("vflbfgs.mapJoinPartitions.shuffleRdd2", "true").toBoolean
-
-  def blockMatrixHorzZipVec[T: ClassTag](
-      blockMatrixRDD: RDD[((Int, Int), SparseMatrix)],
-      dvec: DistributedVector,
-      gridPartitioner: GridPartitionerV2,
-      f: (((Int, Int), SparseMatrix, Vector) => T)
-  ): RDD[((Int, Int), T)] = {
-    import org.apache.spark.rdd.VRDDFunctions._
-    require(gridPartitioner.cols == dvec.numBlocks)
-    blockMatrixRDD.mapJoinPartition(dvec.blocks, mapJoinPartitionsShuffleRdd2)(
-      (pid: Int) => {  // pid is the partition ID of blockMatrix RDD
-        val colPartId = gridPartitioner.colPartId(pid)
-        val startIdx = colPartId * gridPartitioner.colsPerPart
-        var endIdx = startIdx + gridPartitioner.colsPerPart
-        if (endIdx > gridPartitioner.cols) endIdx = gridPartitioner.cols
-        (startIdx until endIdx).toArray // The corresponding partition ID of dvec
-      },
-      (pid: Int, mIter: Iterator[((Int, Int), SparseMatrix)], vIters: Array[(Int, Iterator[Vector])]) => {
-        val vMap = new HashMap[Int, Vector]
-        vIters.foreach {
-          case(colId: Int, iter: Iterator[Vector]) =>
-            val v = iter.next()
-            assert(!iter.hasNext)
-            vMap += (colId -> v)
-        }
-        mIter.map { case ((rowBlockIdx: Int, colBlockIdx: Int), sm: SparseMatrix) =>
-          val vecPart = vMap(colBlockIdx)
-          ((rowBlockIdx, colBlockIdx), f((rowBlockIdx, colBlockIdx), sm, vecPart))
-        }
-      }
-    )
-  }
-
-  def blockMatrixVertZipVec[T: ClassTag](
-      blockMatrixRDD: RDD[((Int, Int), SparseMatrix)],
-      dvec: DistributedVector,
-      gridPartitioner: GridPartitionerV2,
-      f: (((Int, Int), SparseMatrix, Vector) => T)
-  ): RDD[((Int, Int), T)] = {
-    import org.apache.spark.rdd.VRDDFunctions._
-    require(gridPartitioner.rows == dvec.numBlocks)
-    blockMatrixRDD.mapJoinPartition(dvec.blocks, mapJoinPartitionsShuffleRdd2)(
-      (pid: Int) => {
-        val rowPartId = gridPartitioner.rowPartId(pid)
-        val startIdx = rowPartId * gridPartitioner.rowsPerPart
-        var endIdx = startIdx + gridPartitioner.rowsPerPart
-        if (endIdx > gridPartitioner.rows) endIdx = gridPartitioner.rows
-        (startIdx until endIdx).toArray
-      },
-      (pid: Int, mIter: Iterator[((Int, Int), SparseMatrix)], vIters: Array[(Int, Iterator[Vector])]) => {
-        val vMap = new HashMap[Int, Vector]
-        vIters.foreach {
-          case(rowId: Int, iter: Iterator[Vector]) =>
-            val v = iter.next()
-            assert(!iter.hasNext)
-            vMap += (rowId -> v)
-        }
-        mIter.map { case ((rowBlockIdx: Int, colBlockIdx: Int), sm: SparseMatrix) =>
-          val horzPart = vMap(rowBlockIdx)
-          ((rowBlockIdx, colBlockIdx), f((rowBlockIdx, colBlockIdx), sm, horzPart))
-        }
-      }
-    )
-  }
-}
-
-class OneDimGridPartitioner(val total: Long, val partSize: Int) extends Partitioner {
-
-  require(total > partSize && partSize > 0)
-
-  val partNum = {
-    val _partNum = (total - 1) / partSize + 1
-    require(_partNum > 0 && _partNum <= Int.MaxValue)
-    _partNum.toInt
-  }
-
-  override def getPartition(key: Any): Int = (key.asInstanceOf[Long] / partSize).toInt
-
-  override def numPartitions: Int = partNum
-}
-
-private[spark] class GridPartitionerV2(
-    val rows: Int,
-    val cols: Int,
-    val rowsPerPart: Int,
-    val colsPerPart: Int) extends Partitioner {
-
-  require(rows > 0)
-  require(cols > 0)
-  require(rowsPerPart > 0)
-  require(colsPerPart > 0)
-
-  val rowPartitions = math.ceil(rows * 1.0 / rowsPerPart).toInt
-  val colPartitions = math.ceil(cols * 1.0 / colsPerPart).toInt
-
-  override val numPartitions: Int = rowPartitions * colPartitions
-
-  /**
-    * Returns the index of the partition the input coordinate belongs to.
-    *
-    * @param key The partition id i (calculated through this method for coordinate (i, j) in
-    *            `simulateMultiply`, the coordinate (i, j) or a tuple (i, j, k), where k is
-    *            the inner index used in multiplication. k is ignored in computing partitions.
-    * @return The index of the partition, which the coordinate belongs to.
-    */
-  override def getPartition(key: Any): Int = {
-    key match {
-      case i: Int => i
-      case (i: Int, j: Int) =>
-        getPartitionId(i, j)
-      case (i: Int, j: Int, _: Int) =>
-        getPartitionId(i, j)
-      case _ =>
-        throw new IllegalArgumentException(s"Unrecognized key: $key.")
-    }
-  }
-
-  /** Partitions sub-matrices as blocks with neighboring sub-matrices. */
-  private def getPartitionId(i: Int, j: Int): Int = {
-    require(0 <= i && i < rows, s"Row index $i out of range [0, $rows).")
-    require(0 <= j && j < cols, s"Column index $j out of range [0, $cols).")
-    i / rowsPerPart + j / colsPerPart * rowPartitions
-  }
-
-  def rowPartId(partId: Int) = partId % rowPartitions
-  def colPartId(partId: Int) = partId / rowPartitions
-
-  override def equals(obj: Any): Boolean = {
-    obj match {
-      case r: GridPartitionerV2 =>
-        (this.rows == r.rows) && (this.cols == r.cols) &&
-          (this.rowsPerPart == r.rowsPerPart) && (this.colsPerPart == r.colsPerPart)
-      case _ =>
-        false
-    }
-  }
-
-  override def hashCode: Int = {
-    com.google.common.base.Objects.hashCode(
-      rows: java.lang.Integer,
-      cols: java.lang.Integer,
-      rowsPerPart: java.lang.Integer,
-      colsPerPart: java.lang.Integer)
-  }
-}
-
-private[spark] object GridPartitionerV2 {
-
-  /** Creates a new [[GridPartitionerV2]] instance. */
-  def apply(rows: Int, cols: Int, rowsPerPart: Int, colsPerPart: Int): GridPartitionerV2 = {
-    new GridPartitionerV2(rows, cols, rowsPerPart, colsPerPart)
-  }
-
-  /** Creates a new [[GridPartitionerV2]] instance with the input suggested number of partitions. */
-  def apply(rows: Int, cols: Int, suggestedNumPartitions: Int): GridPartitionerV2 = {
-    require(suggestedNumPartitions > 0)
-    val scale = 1.0 / math.sqrt(suggestedNumPartitions)
-    val rowsPerPart = math.round(math.max(scale * rows, 1.0)).toInt
-    val colsPerPart = math.round(math.max(scale * cols, 1.0)).toInt
-    new GridPartitionerV2(rows, cols, rowsPerPart, colsPerPart)
   }
 }
 
@@ -374,5 +225,3 @@ private[spark] class VectorSummarizer extends Serializable {
   def toArray: Array[Double] = sum
 
 }
-
-

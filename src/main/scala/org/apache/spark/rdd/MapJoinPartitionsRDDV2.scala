@@ -48,14 +48,13 @@ class MapJoinPartitionsRDDV2[A: ClassTag, B: ClassTag, V: ClassTag](
     var idxF: (Int) => Array[Int],
     var f: (Int, Iterator[A], Array[(Int, Iterator[B])]) => Iterator[V],
     var rdd1: RDD[A],
-    var rdd2: RDD[B])
+    var rdd2: RDD[B],
+    preservesPartitioning: Boolean = false)
   extends RDD[V](sc, Nil) {
 
   var rdd2WithPid = rdd2.mapPartitionsWithIndex((pid, iter) => iter.map(x => (pid, x)))
 
-  override val partitioner = None
-
-  private var serializer: Serializer = SparkEnv.get.serializer
+  private val serializer: Serializer = SparkEnv.get.serializer
 
   override def getPartitions: Array[Partition] = {
     val array = new Array[Partition](rdd1.partitions.length)

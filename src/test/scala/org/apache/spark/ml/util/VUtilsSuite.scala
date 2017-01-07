@@ -22,11 +22,10 @@ import java.util.concurrent.Executors
 import org.apache.spark.SparkFunSuite
 import org.apache.spark.rdd.RDD
 import org.apache.spark.ml.linalg._
+import org.apache.spark.ml.linalg.distributed.DistributedVectorPartitioner
 import org.apache.spark.ml.linalg.{Vector, Vectors}
 import org.apache.spark.ml.util.TestingUtils._
 import org.apache.spark.mllib.util.MLlibTestSparkContext
-
-import scala.reflect.ClassTag
 
 class VUtilsSuite extends SparkFunSuite with MLlibTestSparkContext {
 
@@ -110,122 +109,6 @@ class VUtilsSuite extends SparkFunSuite with MLlibTestSparkContext {
     )).toDense == Matrices.dense(3, 2, Array(1.0, 3.0, 7.0, 2.0, 8.0, 9.0)))
   }
 
-  def testBlockMatrixHorzZipVecFunc(rows: Int, cols: Int, rowsPerPart: Int, colsPerPart: Int,
-      shuffleRdd2: Boolean) = {
-    val arrMatrix = Array.tabulate(rows * cols) { idx =>
-      val rowIdx = idx % rows
-      val colIdx = idx / rows
-      ((rowIdx, colIdx),
-        SparseMatrix.fromCOO(1, 2, Array((0, 0, rowIdx.toDouble), (0, 1, colIdx.toDouble)))
-        )
-    }
-    val gridPartitioner = GridPartitionerV2(rows, cols, rowsPerPart, colsPerPart)
-    val blockMatrix = sc.parallelize(arrMatrix).partitionBy(gridPartitioner)
-    val arrVec = Array.tabulate(cols)(idx => idx.toDouble)
-    val dvec = splitArrIntoDV(sc, arrVec, 1, cols)
-    val f = (blockCoords: (Int, Int), sv: SparseMatrix, v: Vector) => {
-      (sv(0, 0), sv(0, 1), v(0))
-    }
-    val res0 = blockMatrixHorzZipVec(blockMatrix, dvec, gridPartitioner, f)
-      .map(x => (x._1._1, x._2))
-    val res = res0.map { v =>
-      (v._1, v._2._1.toInt, v._2._2.toInt, v._2._3.toInt)
-    }.collect().map { v =>
-      assert(v._1 == v._2 && v._3 == v._4)
-      (v._2, v._3)
-    }.sortBy(v => v._1 + v._2 * 1000)
-
-    assert(res === Array.tabulate(rows * cols) { idx =>
-      val rowIdx = idx % rows
-      val colIdx = idx / rows
-      (rowIdx, colIdx)
-    })
-  }
-
-  def testBlockMatrixVertZipVecFunc(rows: Int, cols: Int, rowsPerPart: Int, colsPerPart: Int,
-      shuffleRdd2: Boolean) = {
-    val arrMatrix = Array.tabulate(rows * cols) { idx =>
-      val rowIdx = idx % rows
-      val colIdx = idx / rows
-      ((rowIdx, colIdx),
-        SparseMatrix.fromCOO(1, 2, Array((0, 0, rowIdx.toDouble), (0, 1, colIdx.toDouble)))
-        )
-    }
-    val gridPartitioner = GridPartitionerV2(rows, cols, rowsPerPart, colsPerPart)
-    val blockMatrix = sc.parallelize(arrMatrix).partitionBy(gridPartitioner)
-    val arrVec = Array.tabulate(rows)(idx => idx.toDouble)
-    val dvec = VUtils.splitArrIntoDV(sc, arrVec, 1, rows)
-    val f = (blockCoords: (Int, Int), sv: SparseMatrix, v: Vector) => {
-      (sv(0, 0), sv(0, 1), v(0))
-    }
-    val res0 = VUtils.blockMatrixVertZipVec(blockMatrix, dvec, gridPartitioner, f)
-      .map(x => (x._1._2, x._2))
-    val res = res0.map { v =>
-      (v._1, v._2._1.toInt, v._2._2.toInt, v._2._3.toInt)
-    }.collect().map { v =>
-      assert(v._1 == v._3 && v._2 == v._4)
-      (v._2, v._3)
-    }.sortBy(v => v._1 + v._2 * 1000)
-
-    assert(res === Array.tabulate(rows * cols) { idx =>
-      val rowIdx = idx % rows
-      val colIdx = idx / rows
-      (rowIdx, colIdx)
-    })
-  }
-
-  test("blockMatrixHorzZipVec") {
-    testBlockMatrixHorzZipVecFunc(5, 4, 2, 3, false)
-    testBlockMatrixHorzZipVecFunc(8, 6, 2, 3, false)
-    testBlockMatrixHorzZipVecFunc(3, 5, 3, 5, false)
-    testBlockMatrixHorzZipVecFunc(15, 4, 6, 1, false)
-    testBlockMatrixHorzZipVecFunc(15, 3, 6, 2, false)
-
-    testBlockMatrixHorzZipVecFunc(4, 5, 3, 2, false)
-    testBlockMatrixHorzZipVecFunc(6, 8, 3, 2, false)
-    testBlockMatrixHorzZipVecFunc(5, 3, 5, 3, false)
-    testBlockMatrixHorzZipVecFunc(4, 15, 1, 6, false)
-    testBlockMatrixHorzZipVecFunc(3, 15, 2, 6, false)
-
-    testBlockMatrixHorzZipVecFunc(5, 4, 2, 3, true)
-    testBlockMatrixHorzZipVecFunc(8, 6, 2, 3, true)
-    testBlockMatrixHorzZipVecFunc(3, 5, 3, 5, true)
-    testBlockMatrixHorzZipVecFunc(15, 4, 6, 1, true)
-    testBlockMatrixHorzZipVecFunc(15, 3, 6, 2, true)
-
-    testBlockMatrixHorzZipVecFunc(4, 5, 3, 2, true)
-    testBlockMatrixHorzZipVecFunc(6, 8, 3, 2, true)
-    testBlockMatrixHorzZipVecFunc(5, 3, 5, 3, true)
-    testBlockMatrixHorzZipVecFunc(4, 15, 1, 6, true)
-    testBlockMatrixHorzZipVecFunc(3, 15, 2, 6, true)
-  }
-
-  test("blockMatrixVertZipVec") {
-    testBlockMatrixVertZipVecFunc(5, 4, 2, 3, false)
-    testBlockMatrixVertZipVecFunc(8, 6, 2, 3, false)
-    testBlockMatrixVertZipVecFunc(3, 5, 3, 5, false)
-    testBlockMatrixVertZipVecFunc(15, 4, 6, 1, false)
-    testBlockMatrixVertZipVecFunc(15, 3, 6, 2, false)
-
-    testBlockMatrixVertZipVecFunc(4, 5, 3, 2, false)
-    testBlockMatrixVertZipVecFunc(6, 8, 3, 2, false)
-    testBlockMatrixVertZipVecFunc(5, 3, 5, 3, false)
-    testBlockMatrixVertZipVecFunc(4, 15, 1, 6, false)
-    testBlockMatrixVertZipVecFunc(3, 15, 2, 6, false)
-
-    testBlockMatrixVertZipVecFunc(5, 4, 2, 3, true)
-    testBlockMatrixVertZipVecFunc(8, 6, 2, 3, true)
-    testBlockMatrixVertZipVecFunc(3, 5, 3, 5, true)
-    testBlockMatrixVertZipVecFunc(15, 4, 6, 1, true)
-    testBlockMatrixVertZipVecFunc(15, 3, 6, 2, true)
-
-    testBlockMatrixVertZipVecFunc(4, 5, 3, 2, true)
-    testBlockMatrixVertZipVecFunc(6, 8, 3, 2, true)
-    testBlockMatrixVertZipVecFunc(5, 3, 5, 3, true)
-    testBlockMatrixVertZipVecFunc(4, 15, 1, 6, true)
-    testBlockMatrixVertZipVecFunc(3, 15, 2, 6, true)
-  }
-
   test("vector summarizer") {
     val testRDD: RDD[Vector] = sc.parallelize(Seq(
       Vectors.dense(1.0, 2.0, 3.0),
@@ -249,5 +132,15 @@ class VUtilsSuite extends SparkFunSuite with MLlibTestSparkContext {
       res(taskId) = taskId * 10
     })
     assert(res === (0 until 100 by 10).toArray)
+  }
+
+  test("getIteratorZipWithIndex") {
+    val iterator = VUtils.getIteratorZipWithIndex(Iterator(0, 1, 2), -1L + Int.MaxValue)
+    assert(iterator.toArray === Array(
+      (-1L + Int.MaxValue, 0), (0L + Int.MaxValue, 1), (1L + Int.MaxValue, 2)
+    ))
+    intercept[IllegalArgumentException] {
+      VUtils.getIteratorZipWithIndex(Iterator(0, 1, 2), -1L)
+    }
   }
 }

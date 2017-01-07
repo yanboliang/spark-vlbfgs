@@ -17,7 +17,7 @@
 
 package org.apache.spark.ml.example
 
-import org.apache.spark.ml.classification.{LogisticRegression, VLogisticRegression}
+import org.apache.spark.ml.classification.VLogisticRegression
 import org.apache.spark.sql.{Dataset, SparkSession}
 
 object VLORExample {
@@ -37,7 +37,6 @@ object VLORExample {
     var elasticNetParam = 1.0
 
     var dataPath: String = null
-    var shuffleRDD2: Boolean = true
 
     try {
       maxIter = args(0).toInt

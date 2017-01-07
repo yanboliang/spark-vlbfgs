@@ -15,15 +15,15 @@
  * limitations under the License.
  */
 
-package org.apache.spark.ml.linalg
+package org.apache.spark.ml.linalg.distributed
 
-import org.apache.spark.internal.Logging
 import org.apache.hadoop.fs.Path
-import org.apache.spark.ml.util.VUtils
-import org.apache.spark.{Partitioner, SparkContext}
+import org.apache.spark.internal.Logging
+import org.apache.spark.ml.linalg.{BLAS, DenseVector, Vector, Vectors}
 import org.apache.spark.rdd.{RDD, VRDDFunctions}
 import org.apache.spark.storage.StorageLevel
 import org.apache.spark.util.RDDUtils
+import org.apache.spark.{Partitioner, SparkContext}
 
 import scala.collection.mutable.ArrayBuffer
 
@@ -47,7 +47,11 @@ class DistributedVector(
 
     val resBlocks = blocks.zip(dv2.blocks).map {
       case (vec1: Vector, vec2: Vector) =>
-        val vec3 = vec1.copy
+        val vec3 = if (vec1.isInstanceOf[DenseVector]) {
+          vec1.copy
+        } else {
+          vec1.toDense
+        }
         BLAS.axpy(a, vec2, vec3)
         vec3
     }
@@ -83,9 +87,8 @@ class DistributedVector(
     math.sqrt(blocks.map(Vectors.norm(_, 2)).map(x => x * x).sum())
   }
 
-  def persist(storageLevel: StorageLevel = StorageLevel.MEMORY_AND_DISK,
-              eager: Boolean = true)
-    : DistributedVector = {
+  def persist(storageLevel: StorageLevel = StorageLevel.MEMORY_AND_DISK, eager: Boolean = true)
+      : DistributedVector = {
     blocks.persist(storageLevel)
     if (eager) {
       blocks.count() // force eager cache.
@@ -186,14 +189,18 @@ class DistributedVector(
     RDDUtils.isRDDPersisted(blocks)
   }
 
-  def checkpoint(isRDDAlreadyComputed: Boolean): Unit = {
+  def checkpoint(isRDDAlreadyComputed: Boolean, eager: Boolean): Unit = {
     assert(isPersisted)
+    logInfo(s"checkpoint distributed vector ${blocks.id}")
     if (isRDDAlreadyComputed) {
       val checkpointBlocks = blocks.map(x => x)
       checkpointBlocks.persist().checkpoint()
       blocks = checkpointBlocks
     } else {
       blocks.checkpoint()
+    }
+    if (eager) {
+      blocks.count() // eager checkpoint
     }
   }
 
@@ -215,7 +222,7 @@ private[spark] class DistributedVectorPartitioner(val nParts: Int) extends Parti
   override def numPartitions: Int = nParts
 }
 
-private class AggrScalVec(var vec: Vector) extends Serializable {
+private class AggrScalVec(var vec: DenseVector) extends Serializable {
 
   def this() = this(null)
 
@@ -223,7 +230,7 @@ private class AggrScalVec(var vec: Vector) extends Serializable {
     val a = scalVec._1
     val v2 = scalVec._2
     if (vec == null) {
-      vec = Vectors.zeros(v2.size)
+      vec = Vectors.zeros(v2.size).toDense
     }
     BLAS.axpy(a, v2, vec)
     this
@@ -263,28 +270,25 @@ object DistributedVectors {
   }
 
   def combine(vlist: (Double, DistributedVector)*): DistributedVector = {
-    require(vlist.length > 1)
-
+    require(vlist.nonEmpty)
+    val vecsList = vlist.map{case (a: Double, v: DistributedVector) =>
+      v.blocks.mapPartitionsWithIndex((pid: Int, iter: Iterator[Vector]) => {
+        iter.map((v: Vector) => (pid, (a, v)))
+      })
+    }
     val firstDV = vlist(0)._2
-    val rddList = vlist.map(_._2.blocks).toList
-    val coeffs = vlist.map(_._1)
-
-    val combinedVec = VRDDFunctions.zipMultiRDDs(rddList) {
-      iterList: List[Iterator[Vector]] =>
-        var sumVec: Vector = null
-        var i = 0
-        while (i < iterList.size) {
-          val v = iterList(i).next()
-          if (sumVec == null) {
-            sumVec = Vectors.zeros(v.size)
-          }
-          BLAS.axpy(coeffs(i), v, sumVec)
-          i += 1
-        }
-        iterList.foreach(iter => assert(!(iter.hasNext)))
-        Iterator(sumVec)
+    val nParts = firstDV.numBlocks
+    val sizePerPart = firstDV.sizePerBlock
+    val nSize = firstDV.size
+    val combinedVec = vecsList.head.context.union(vecsList).aggregateByKey(
+      new AggrScalVec,
+      new DistributedVectorPartitioner(nParts)
+    )((asv: AggrScalVec, sv: (Double, Vector)) => asv.add(sv),
+      (asv: AggrScalVec, asv2: AggrScalVec) => asv.merge(asv2)
+    ).map {
+      case (k, v) => v.vec.asInstanceOf[Vector]
     }
 
-    new DistributedVector(combinedVec, firstDV.sizePerBlock, firstDV.numBlocks, firstDV.size)
+    new DistributedVector(combinedVec, sizePerPart, nParts, nSize)
   }
 }

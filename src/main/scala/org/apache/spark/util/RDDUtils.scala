@@ -17,14 +17,12 @@
 
 package org.apache.spark.util
 
-import org.apache.spark.SparkEnv
 import org.apache.spark.rdd.RDD
-import org.apache.spark.storage.{RDDBlockId, StorageLevel, StorageUtils}
+import org.apache.spark.storage.StorageLevel
 
 private[spark] object RDDUtils {
 
   def isRDDPersisted[T](rdd: RDD[T]): Boolean = {
     rdd.getStorageLevel != StorageLevel.NONE
   }
-
 }

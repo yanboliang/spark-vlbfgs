@@ -18,7 +18,8 @@
 package org.apache.spark.ml.optim
 
 import breeze.optimize.{BacktrackingLineSearch, DiffFunction}
-import org.apache.spark.ml.linalg.{Vector, Vectors, DistributedVector => DV}
+import org.apache.spark.ml.linalg.distributed.DistributedVector
+import org.apache.spark.ml.linalg.{Vector, Vectors}
 import org.apache.spark.storage.StorageLevel
 
 /**
@@ -40,13 +41,13 @@ class VectorFreeOWLQN (
     maxIter: Int,
     m: Int,
     l1RegValue: (Double, Boolean),
-    l1RegDV: DV,
+    l1RegDV: DistributedVector,
     tolerance: Double,
     eagerPersist: Boolean)
 
   extends VectorFreeLBFGS(maxIter, m, tolerance, eagerPersist) { optimizer =>
 
-  def this(maxIter: Int, m: Int, l1Reg: DV, tolerance: Double, eagerPersist: Boolean) = {
+  def this(maxIter: Int, m: Int, l1Reg: DistributedVector, tolerance: Double, eagerPersist: Boolean) = {
     this(maxIter, m, null, l1Reg, tolerance, eagerPersist = eagerPersist)
   }
 
@@ -55,7 +56,7 @@ class VectorFreeOWLQN (
     this(maxIter, m, l1RegValue, null, tolerance, eagerPersist = eagerPersist)
   }
 
-  def this(maxIter: Int, m: Int, l1Reg: DV) = {
+  def this(maxIter: Int, m: Int, l1Reg: DistributedVector) = {
     this(maxIter, m, null, l1Reg, tolerance = 1e-8, eagerPersist = true)
   }
 
@@ -63,7 +64,7 @@ class VectorFreeOWLQN (
     this(maxIter, m, l1RegValue, null, tolerance = 1e-8, eagerPersist = true)
   }
 
-  override def chooseDescentDirection(history: this.History, state: this.State): DV = {
+  override def chooseDescentDirection(history: this.History, state: this.State): DistributedVector = {
     // The original paper requires that the descent direction be corrected to be
     // in the same directional (within the same hypercube) as the adjusted gradient for proof.
     // Although this doesn't seem to affect the outcome that much in most of cases, there are some cases
@@ -81,7 +82,8 @@ class VectorFreeOWLQN (
     correctedDir.persist(StorageLevel.MEMORY_AND_DISK, eager = eagerPersist)
   }
 
-  override protected def takeStep(state: State, dir: DV, stepSize: Double): DV = {
+  override protected def takeStep(
+      state: State, dir: DistributedVector, stepSize: Double): DistributedVector = {
     assert(state.adjustedGradient.isPersisted)
     // projects x to be on the same orthant as y
     // this basically requires that x'_i = x_i if sign(x_i) == sign(y_i), and 0 otherwise.
@@ -106,7 +108,7 @@ class VectorFreeOWLQN (
   }
 
   // Adds in the regularization stuff to the gradient(pseudo-gradient)
-  override protected def adjust(newX: DV, newGrad: DV, newVal: Double): (Double, DV) = {
+  override protected def adjust(newX: DistributedVector, newGrad: DistributedVector, newVal: Double): (Double, DistributedVector) = {
     /**
      * calculate objective L1 reg value contributed by this component,
      *  and the component of pseudo gradient with L1
@@ -175,7 +177,7 @@ class VectorFreeOWLQN (
   // Line Search DiffFunction for vector-free OWLQN
   class VOWLQNLineSearchDiffFun(
       state: this.State,
-      direction: DV,
+      direction: DistributedVector,
       outer: VDiffFunction,
       eagerPersist: Boolean)
     extends DiffFunction[Double]{
@@ -190,13 +192,13 @@ class VectorFreeOWLQN (
     var lastAdjValue: Double = 0.0
 
     // store last point vector
-    var lastX: DV = null
+    var lastX: DistributedVector = null
 
     // store last gradient vector
-    var lastGrad: DV = null
+    var lastGrad: DistributedVector = null
 
     // store last adjusted gradient vector
-    var lastAdjGrad: DV = null
+    var lastAdjGrad: DistributedVector = null
 
     // store last line search grad value
     var lastLineSearchGradValue = 0.0
@@ -268,7 +270,7 @@ class VectorFreeOWLQN (
   override protected def determineStepSizeAndTakeStep(
       state: State,
       fn: VDiffFunction,
-      direction: DV): (Double, Double, DV, DV, DV) = {
+      direction: DistributedVector): (Double, Double, DistributedVector, DistributedVector, DistributedVector) = {
 
     val lineSearchDiffFn = new VOWLQNLineSearchDiffFun(state, direction, fn, eagerPersist)
 
@@ -280,9 +282,9 @@ class VectorFreeOWLQN (
     )
     var newValue: Double = 0.0
     var newAdjValue: Double = 0.0
-    var newX: DV = null
-    var newGrad: DV = null
-    var newAdjGrad: DV = null
+    var newX: DistributedVector = null
+    var newGrad: DistributedVector = null
+    var newAdjGrad: DistributedVector = null
 
     if (alpha == lineSearchDiffFn.lastAlpha) {
       newValue = lineSearchDiffFn.lastValue
