@@ -189,12 +189,14 @@ class DistributedVector(
     RDDUtils.isRDDPersisted(blocks)
   }
 
-  def checkpoint(isRDDAlreadyComputed: Boolean, eager: Boolean): Unit = {
+  def checkpoint(isRDDAlreadyComputed: Boolean, eager: Boolean): RDD[Vector] = {
     assert(isPersisted)
     logInfo(s"checkpoint distributed vector ${blocks.id}")
+    var oldBlocks: RDD[Vector] = null
     if (isRDDAlreadyComputed) {
       val checkpointBlocks = blocks.map(x => x)
       checkpointBlocks.persist().checkpoint()
+      oldBlocks = blocks
       blocks = checkpointBlocks
     } else {
       blocks.checkpoint()
@@ -202,6 +204,9 @@ class DistributedVector(
     if (eager) {
       blocks.count() // eager checkpoint
     }
+    // return old blocks (only when `isRDDAlreadyComputed`),
+    // so that caller can unpersist the old RDD later.
+    oldBlocks
   }
 
   def deleteCheckpoint(): Unit = {

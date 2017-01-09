@@ -498,6 +498,7 @@ class VLogisticRegression(override val uid: String)
     val interceptVal = interceptValAccu.value
     val model = copyValues(new VLogisticRegressionModel(uid, coeffs.toLocal, interceptVal))
     state.checkpointList.foreach(_.deleteCheckpoint())
+    state.dispose(true)
     model
   }
 

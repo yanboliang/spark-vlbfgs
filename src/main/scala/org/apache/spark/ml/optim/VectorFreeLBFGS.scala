@@ -133,8 +133,8 @@ class VectorFreeLBFGS(
     val x = init
     val (value, grad) = fn.calculate(x)
     val (adjValue, adjGrad) = adjust(x, grad, value)
-    State(x, value, grad, adjValue, adjGrad, 0, adjValue,
-      IndexedSeq(Double.PositiveInfinity), NotConvergedFlag, Array[DistributedVector]())
+    new State(x, value, grad, adjValue, adjGrad, 0, adjValue,
+      IndexedSeq(Double.PositiveInfinity), NotConvergedFlag, null, Array[DistributedVector]())
   }
 
   // VectorFreeOWLQN will override this method
@@ -157,12 +157,7 @@ class VectorFreeLBFGS(
         assert(dir.isPersisted)
         val (value, adjValue, x, grad, adjGrad) = determineStepSizeAndTakeStep(state, fn, dir)
 
-        dir.unpersist()
-        // in order to save memory, release ununsed adjGrad DV
-        if (state.adjustedGradient != state.grad) {
-          state.adjustedGradient.unpersist()
-        }
-        state.adjustedGradient = null
+
 
         val newIter = state.iter + 1
 
@@ -188,18 +183,22 @@ class VectorFreeLBFGS(
 
           checkpointList = checkpointBuff.toArray.filter(_ != null)
           // checkpoint these vectors in parallel, and force trigger checkpoint immediately
-          checkpointList.par.foreach(_.checkpoint(true, true))
+          checkpointList.par.map(_.checkpoint(true, true)).foreach(_.unpersist())
 
           // After new checkpoint tasks done, we can delete old checkpointed distributed vectors
           state.checkpointList.par.foreach(_.deleteCheckpoint())
         }
 
-        val newState = State(x, value, grad, adjValue,
+        val newState = new State(x, value, grad, adjValue,
           adjGrad, newIter, state.initialAdjVal,
           (state.fValHistory :+ value).takeRight(fvalMemory),
-          NotConvergedFlag, checkpointList)
+          NotConvergedFlag, dir, checkpointList)
 
         newState.convergenceFlag = checkConvergence(newState)
+
+        // in order to recycle memory ASAP, now dispose last iteration state
+        state.dispose(false)
+
         newState
       } catch {
         case x: Exception =>
@@ -335,17 +334,38 @@ object VectorFreeLBFGS {
   val GradientConvergedFlag = 3
   val SearchFailedFlag = 4
 
-  case class State(
-    x: DistributedVector,
-    value: Double,
-    grad: DistributedVector,
-    adjustedValue: Double,
+  class State(
+    var x: DistributedVector,
+    val value: Double,
+    var grad: DistributedVector,
+    val adjustedValue: Double,
     var adjustedGradient: DistributedVector,
-    iter: Int,
-    initialAdjVal: Double,
-    fValHistory: IndexedSeq[Double],
+    val iter: Int,
+    val initialAdjVal: Double,
+    val fValHistory: IndexedSeq[Double],
     var convergenceFlag: Int,
-    checkpointList: Array[DistributedVector]) {
+    var direction: DistributedVector,
+    var checkpointList: Array[DistributedVector])
+  {
+    def dispose(iterationFinished: Boolean) = {
+      // If iteration hasn't finished,
+      // releasing `x` and `grad` should be postponed to next iteration
+      if (iterationFinished) {
+        x.unpersist()
+        grad.unpersist()
+      }
+      if (adjustedGradient != grad) {
+        adjustedGradient.unpersist()
+      }
+      x = null
+      grad = null
+      adjustedGradient = null
+      if (direction != null) {
+        direction.unpersist()
+        direction = null
+      }
+      checkpointList = null
+    }
   }
 
   trait History {

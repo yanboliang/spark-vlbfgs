@@ -209,6 +209,7 @@ class VectorFreeOWLQN (
     // calculates the gradient at a point
     override def gradientAt(alpha: Double): Double = calculate(alpha)._2
 
+    var callCalcCount = 0
     // Calculates both the value and the gradient at a point
     def calculate(alpha: Double): (Double, Double) = {
 
@@ -217,6 +218,8 @@ class VectorFreeOWLQN (
       } else if (alpha == lastAlpha) {
         lastAdjValue -> lastLineSearchGradValue
       } else {
+        callCalcCount += 1
+        logInfo(s"Vector free OWLQN line search try step: ${alpha}")
         // release unused RDDs
         disposeLastResult()
 
