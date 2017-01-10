@@ -22,7 +22,8 @@ import java.util.Random
 import breeze.linalg.{DenseVector => BDV, norm => Bnorm}
 import breeze.optimize.{DiffFunction => BDF, OWLQN => BreezeOWLQN}
 import org.apache.spark.SparkFunSuite
-import org.apache.spark.ml.linalg.{DistributedVector, Vectors}
+import org.apache.spark.ml.linalg.Vectors
+import org.apache.spark.ml.linalg.distributed.DistributedVector
 import org.apache.spark.ml.util.VUtils
 import org.apache.spark.ml.util.TestingUtils._
 import org.apache.spark.mllib.util.MLlibTestSparkContext
@@ -128,7 +129,7 @@ class VectorFreeOWLQNSuite extends SparkFunSuite with MLlibTestSparkContext {
     }
 
     val owlqnIter = owlqn.iterations(df, initBDV)
-    val vf_owlqnIter = vf_owlqn.iterations(vf_df, initDisV)
+    val vf_owlqnIter = vf_owlqn.iterations(vf_df, initDisV, iter => iter % 15 == 0)
 
     var state: owlqn.State = null
     var vf_state: vf_owlqn.State = null
@@ -154,7 +155,7 @@ class VectorFreeOWLQNSuite extends SparkFunSuite with MLlibTestSparkContext {
     val vf_owlqn2 = new VectorFreeOWLQN(maxIter, bm, l1RegDV)
 
     val owlqnIter2 = owlqn2.iterations(df, initBDV)
-    val vf_owlqnIter2 = vf_owlqn2.iterations(vf_df, initDisV)
+    val vf_owlqnIter2 = vf_owlqn2.iterations(vf_df, initDisV, iter => iter % 15 == 0)
 
     var state2: owlqn2.State = null
     var vf_state2: vf_owlqn2.State = null
@@ -176,7 +177,7 @@ class VectorFreeOWLQNSuite extends SparkFunSuite with MLlibTestSparkContext {
 
     for (bm <- 4 to 6) {
       for (dimension <- 4 to 6 by 2) {
-        testRosenbrock(bm, 10, dimension)
+        testRosenbrock(bm, 20, dimension)
       }
     }
   }

@@ -4,5 +4,4 @@ data/
 *.iml
 git.*
 src/main/scala/org/apache/spark/ml/privatecode
-
-
+src/test/scala/org/apache/spark/ml/privatecode

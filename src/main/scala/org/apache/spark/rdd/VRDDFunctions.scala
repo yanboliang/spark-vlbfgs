@@ -24,7 +24,7 @@ private[spark] class VRDDFunctions[A](self: RDD[A])
     (implicit at: ClassTag[A])
   extends Logging with Serializable {
 
-  def mapJoinPartition[B: ClassTag, V: ClassTag](rdd2: RDD[B], shuffleRdd2: Boolean)(
+  def mapJoinPartition[B: ClassTag, V: ClassTag](rdd2: RDD[B], shuffleRdd2: Boolean = true)(
     idxF: (Int) => Array[Int],
     f: (Int, Iterator[A], Array[(Int, Iterator[B])]) => Iterator[V]
   ) = self.withScope{
@@ -48,7 +48,7 @@ private[spark] object VRDDFunctions {
   }
 
   def zipMultiRDDs[A: ClassTag, V: ClassTag](rddList: List[RDD[A]])
-      (f: (List[Iterator[A]]) => Iterator[V]) = {
+      (f: (List[Iterator[A]]) => Iterator[V]): RDD[V] = {
     assert(rddList.length > 1)
     rddList(0).withScope{
       val sc = rddList(0).sparkContext

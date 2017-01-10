@@ -49,8 +49,6 @@ class MapJoinPartitionsRDD[A: ClassTag, B: ClassTag, V: ClassTag](
     var rdd2: RDD[B])
   extends RDD[V](sc, Nil) {
 
-  override val partitioner = None
-
   override def getPartitions: Array[Partition] = {
     val array = new Array[Partition](rdd1.partitions.length)
     for (s1 <- rdd1.partitions) {

@@ -15,14 +15,13 @@
  * limitations under the License.
  */
 
-package org.apache.spark.ml.linalg
+package org.apache.spark.ml.linalg.distributed
 
-import breeze.linalg.{norm => Bnorm, DenseVector => BDV}
-
+import breeze.linalg.{DenseVector => BDV, norm => Bnorm}
 import org.apache.spark.SparkFunSuite
-
-import org.apache.spark.ml.util.VUtils
+import org.apache.spark.ml.linalg.Vectors
 import org.apache.spark.ml.util.TestingUtils._
+import org.apache.spark.ml.util.VUtils
 import org.apache.spark.mllib.util.MLlibTestSparkContext
 
 class DistributedVectorSuite extends SparkFunSuite with MLlibTestSparkContext {

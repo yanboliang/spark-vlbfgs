@@ -18,8 +18,7 @@
 package org.apache.spark.rdd
 
 import org.apache.spark.SparkFunSuite
-import org.apache.spark.ml.linalg.DistributedVectorPartitioner
-import org.apache.spark.ml.util.GridPartitionerV2
+import org.apache.spark.ml.linalg.distributed.{DistributedVectorPartitioner, VGridPartitioner}
 import org.apache.spark.mllib.util.MLlibTestSparkContext
 
 class VRDDFunctionsSuite extends SparkFunSuite with MLlibTestSparkContext {
@@ -38,7 +37,7 @@ class VRDDFunctionsSuite extends SparkFunSuite with MLlibTestSparkContext {
         val colIdx = idx / 9
         ((rowIdx, colIdx), (rowIdx, colIdx))
       }
-    }).partitionBy(GridPartitionerV2(9, 9, 3, 3)).cache()
+    }).partitionBy(VGridPartitioner(9, 9, 3, 3)).cache()
     rdd1.count()
     val rdd2 = sc.parallelize(Array.tabulate(9)(idx => (idx, idx)))
       .partitionBy(new DistributedVectorPartitioner(9)).cache()
@@ -74,5 +73,18 @@ class VRDDFunctionsSuite extends SparkFunSuite with MLlibTestSparkContext {
 
   test("mapJoinPartitions V2") {
     testMapJoinPartitions(true)
+  }
+
+  test("test multiZipRDDs") {
+    val rdd1 = sc.makeRDD(Array(1, 2, 3, 4), 2)
+    val rddList = List(rdd1, rdd1.map(_ + 10), rdd1.map(_ + 200))
+    val zipped = VRDDFunctions.zipMultiRDDs(rddList) {
+      iterList: List[Iterator[Int]] => new Iterator[Int]{
+        override def hasNext: Boolean = iterList.map(_.hasNext).reduce(_ && _)
+        override def next(): Int = iterList.map(_.next()).sum
+      }
+    }
+    assert(zipped.glom().map(_.toList).collect().toList ===
+      List(List(213, 216), List(219, 222)))
   }
 }

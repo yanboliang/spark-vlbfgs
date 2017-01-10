@@ -23,7 +23,7 @@ import breeze.linalg.{DenseVector => BDV, norm => Bnorm}
 import breeze.optimize.{DiffFunction => BDF, LBFGS => BreezeLBFGS}
 import org.apache.spark.ml.linalg.Vectors
 import org.apache.spark.SparkFunSuite
-import org.apache.spark.ml.linalg.DistributedVector
+import org.apache.spark.ml.linalg.distributed.DistributedVector
 import org.apache.spark.ml.util.VUtils
 import org.apache.spark.ml.util.TestingUtils._
 import org.apache.spark.mllib.util.MLlibTestSparkContext
@@ -129,7 +129,7 @@ class VectorFreeLBFGSSuite extends SparkFunSuite with MLlibTestSparkContext {
     }
 
     val lbfgsIter = lbfgs.iterations(df, initBDV)
-    val vf_lbfgsIter = vf_lbfgs.iterations(vf_df, initDisV)
+    val vf_lbfgsIter = vf_lbfgs.iterations(vf_df, initDisV, iter => iter % 15 == 0)
 
     var state: lbfgs.State = null
     var vf_state: vf_lbfgs.State = null
@@ -151,7 +151,7 @@ class VectorFreeLBFGSSuite extends SparkFunSuite with MLlibTestSparkContext {
 
     for (bm <- 4 to 10) {
       for (dimension <- 4 to 6 by 2) {
-        testRosenbrock(bm, 10, dimension)
+        testRosenbrock(bm, 20, dimension)
       }
     }
   }
