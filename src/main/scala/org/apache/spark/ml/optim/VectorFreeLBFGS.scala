@@ -103,7 +103,7 @@ class VectorFreeLBFGS(
   }
 
   protected def takeStep(state: this.State, dir: DistributedVector, stepSize: Double): DistributedVector = {
-    state.x.addScalVec(stepSize, dir)
+    state.x.addScaledVector(stepSize, dir)
       .persist(StorageLevel.MEMORY_AND_DISK, eager = eagerPersist)
   }
 
@@ -282,7 +282,7 @@ class VectorFreeLBFGS(
 
         lastAlpha = alpha
 
-        lastX = state.x.addScalVec(alpha, direction)
+        lastX = state.x.addScaledVector(alpha, direction)
           .persist(StorageLevel.MEMORY_AND_DISK, eager = eagerPersist)
         val (fnValue, grad) = outer.calculate(lastX)
 
@@ -455,8 +455,8 @@ object VectorFreeLBFGS {
         val localM = m
         val mm1 = m - 1
 
-        val rddList = Array.concat(S.filter(_ != null).map(_.blocks),
-          Y.filter(_ != null).map(_.blocks), Array(newAdjGrad.blocks)).toList
+        val rddList = Array.concat(S.filter(_ != null).map(_.values),
+          Y.filter(_ != null).map(_.values), Array(newAdjGrad.values)).toList
 
         // calculate dot products between 2M + 1 distributed vectors
         // only calulate the dot products of new added`S`, `Y` and `adjGrad`

@@ -132,7 +132,7 @@ class VectorFreeOWLQN (
       }
     }
 
-    val l1ValueAccu = newX.blocks.sparkContext.doubleAccumulator
+    val l1ValueAccu = newX.values.sparkContext.doubleAccumulator
     val adjGrad = if (l1RegDV != null) {
       newX.zipPartitions(newGrad, l1RegDV) {
         (partX: Vector, partGrad: Vector, partReg: Vector) =>
@@ -150,7 +150,7 @@ class VectorFreeOWLQN (
       val localL1RegValue = l1RegValue._1
       val withIntercept = l1RegValue._2
 
-      val numParts = newX.numBlocks
+      val numParts = newX.numPartitions
       newX.zipPartitionsWithIndex(newGrad) {
         (pid: Int, partX: Vector, partGrad: Vector) =>
           val res = Array.fill(partX.size)(0.0)

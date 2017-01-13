@@ -471,7 +471,7 @@ class VLogisticRegression(override val uid: String)
      */
     val interceptValAccu = sc.doubleAccumulator
     val coeffs = rawCoeffs.zipPartitionsWithIndex(
-      featuresStd, rawCoeffs.sizePerBlock, numFeatures
+      featuresStd, rawCoeffs.sizePerPart, numFeatures
     ) {
       case (pid: Int, partCoeffs: Vector, partFeatursStd: Vector) =>
         val partFeatursStdArr = partFeatursStd.toDense.toArray
@@ -623,7 +623,7 @@ private[ml] class VBinomialLogisticCostFun(
     assert(featuresStd.isPersisted)
 
     // compute regularization for grad & objective value
-    val lossRegAccu = gradDV.blocks.sparkContext.doubleAccumulator
+    val lossRegAccu = gradDV.values.sparkContext.doubleAccumulator
     val gradDVWithReg: DistributedVector = if (standardization) {
       gradDV.zipPartitionsWithIndex(coeffs) {
         case (pid: Int, partGrads: Vector, partCoeffs: Vector) =>

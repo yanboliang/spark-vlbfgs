@@ -43,8 +43,8 @@ class VBlockMatrix(
     import org.apache.spark.rdd.VRDDFunctions._
 
     val gridPartitionerParam = gridPartitioner
-    require(gridPartitionerParam.colBlocks == vec.numBlocks)
-    blocks.mapJoinPartition(vec.blocks, mapJoinPartitionsShuffleRdd2)(
+    require(gridPartitionerParam.colBlocks == vec.numPartitions)
+    blocks.mapJoinPartition(vec.values, mapJoinPartitionsShuffleRdd2)(
       (pid: Int) => {
         // pid is the partition ID of blockMatrix RDD
         val colPartId = gridPartitionerParam.colPartId(pid)
@@ -77,8 +77,8 @@ class VBlockMatrix(
     import org.apache.spark.rdd.VRDDFunctions._
 
     val gridPartitionerParam = gridPartitioner
-    require(gridPartitionerParam.rowBlocks == vec.numBlocks)
-    blocks.mapJoinPartition(vec.blocks, mapJoinPartitionsShuffleRdd2)(
+    require(gridPartitionerParam.rowBlocks == vec.numPartitions)
+    blocks.mapJoinPartition(vec.values, mapJoinPartitionsShuffleRdd2)(
       (pid: Int) => {
         val rowPartId = gridPartitionerParam.rowPartId(pid)
         val startIdx = rowPartId * gridPartitionerParam.rowsPerBlock

@@ -54,18 +54,18 @@ private[ml] object VUtils {
   def splitArrIntoDV(
       sc: SparkContext,
       arr: Array[Double],
-      partSize: Int,
-      partNum: Int): DistributedVector = {
+      sizePerPart: Int,
+      numPartitions: Int): DistributedVector = {
     var i = 0
-    val splitArr = new Array[Array[Double]](partNum)
-    val lastSplitSize = arr.length - partSize * (partNum - 1)
-    while (i < partNum) {
-      if (i < partNum - 1) splitArr(i) = arr.slice(partSize * i, partSize * i + partSize)
-      else splitArr(i) = arr.slice(partSize * i, arr.length)
+    val splitArr = new Array[Array[Double]](numPartitions)
+    val lastSplitSize = arr.length - sizePerPart * (numPartitions - 1)
+    while (i < numPartitions) {
+      if (i < numPartitions - 1) splitArr(i) = arr.slice(sizePerPart * i, sizePerPart * i + sizePerPart)
+      else splitArr(i) = arr.slice(sizePerPart * i, arr.length)
       i += 1
     }
-    val rdd = sc.parallelize(splitArr.zipWithIndex.map(x => (x._2, Vectors.dense(x._1))), partNum)
-    kvRDDToDV(rdd, partSize, partNum, arr.length)
+    val rdd = sc.parallelize(splitArr.zipWithIndex.map(x => (x._2, Vectors.dense(x._1))), numPartitions)
+    kvRDDToDV(rdd, sizePerPart, numPartitions, arr.length)
   }
 
   def splitSparseVector(sv: SparseVector, colsPerBlock: Int): Array[SparseVector] = {

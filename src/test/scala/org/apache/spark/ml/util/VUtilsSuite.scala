@@ -56,7 +56,7 @@ class VUtilsSuite extends SparkFunSuite with MLlibTestSparkContext {
   test("splitArrIntoDV") {
     val arrs = splitArrIntoDV(
       sc, Array(1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0), 3, 3)
-      .blocks.collect()
+      .values.collect()
 
     assert(arrs(0).toArray === Array(1.0, 2.0, 3.0))
     assert(arrs(1).toArray === Array(4.0, 5.0, 6.0))
