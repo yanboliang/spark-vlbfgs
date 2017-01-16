@@ -49,7 +49,7 @@ import scala.collection.mutable.ArrayBuffer
  */
 class VLBFGS(
     maxIter: Int,
-    m: Int = 10,
+    m: Int = 7,
     tolerance: Double = 1E-9,
     eagerPersist: Boolean = true) extends Logging {
 
