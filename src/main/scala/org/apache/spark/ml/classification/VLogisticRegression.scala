@@ -22,7 +22,7 @@ import org.apache.spark.internal.Logging
 import org.apache.spark.ml.feature.Instance
 import org.apache.spark.ml.linalg.{BLAS, DenseVector, SparseMatrix, SparseVector, Vector, Vectors}
 import org.apache.spark.ml.linalg.distributed._
-import org.apache.spark.ml.optim.{VDiffFunction, VectorFreeLBFGS, VectorFreeOWLQN}
+import org.apache.spark.ml.optim.{VDiffFunction, VLBFGS, VOWLQN}
 import org.apache.spark.ml.param.{BooleanParam, IntParam, ParamMap, ParamValidators}
 import org.apache.spark.ml.param.shared._
 import org.apache.spark.ml.util._
@@ -362,7 +362,7 @@ class VLogisticRegression(override val uid: String)
       $(eagerPersist))
 
     val optimizer = if ($(elasticNetParam) == 0.0 || $(regParam) == 0.0) {
-      new VectorFreeLBFGS(
+      new VLBFGS(
         maxIter = $(maxIter),
         m = $(numLBFGSCorrections),
         tolerance = $(tol),
@@ -371,7 +371,7 @@ class VLogisticRegression(override val uid: String)
     } else {
       // with L1 regulazation, use Vector-free OWLQN optimizer
       if ($(standardization)) {
-        new VectorFreeOWLQN(
+        new VOWLQN(
           maxIter = $(maxIter),
           m = $(numLBFGSCorrections),
           l1RegValue = (regParamL1, fitInterceptParam),
@@ -402,7 +402,7 @@ class VLogisticRegression(override val uid: String)
             )
             Vectors.dense(res)
         }
-        new VectorFreeOWLQN(
+        new VOWLQN(
           maxIter = $(maxIter),
           m = $(numLBFGSCorrections),
           l1Reg = regParamL1DV,

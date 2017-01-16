@@ -47,20 +47,20 @@ import scala.collection.mutable.ArrayBuffer
  * @param tolerance the convergence tolerance of iterations.
  * @param eagerPersist whether eagerly persist distributed vectors when calculating.
  */
-class VectorFreeLBFGS(
+class VLBFGS(
     maxIter: Int,
     m: Int = 10,
     tolerance: Double = 1E-9,
     eagerPersist: Boolean = true) extends Logging {
 
-  import VectorFreeLBFGS._
+  import VLBFGS._
   require(m > 0)
 
   val fvalMemory: Int = 20
   val relativeTolerance: Boolean = true
 
-  type State = VectorFreeLBFGS.State
-  type History = VectorFreeLBFGS.History
+  type State = VLBFGS.State
+  type History = VLBFGS.History
 
   // return Tuple(newValue, newAdjValue, newX, newGrad, newAdjGrad)
   protected def determineAndTakeStepSize(
@@ -141,7 +141,7 @@ class VectorFreeLBFGS(
       IndexedSeq(Double.PositiveInfinity), NotConvergedFlag, null, Array[DistributedVector]())
   }
 
-  // VectorFreeOWLQN will override this method
+  // VOWLQN will override this method
   def chooseDescentDirection(history: this.History, state: this.State): DistributedVector = {
     val direction = history.computeDirection(state.x, state.grad, state.adjustedGradient)
     direction.persist(StorageLevel.MEMORY_AND_DISK, eager = eagerPersist)
@@ -330,7 +330,7 @@ abstract class VDiffFunction(eagerPersist: Boolean = true) { outer =>
   def calculate(x: DistributedVector): (Double, DistributedVector)
 }
 
-object VectorFreeLBFGS {
+object VLBFGS {
 
   val NotConvergedFlag = 0
   val MaxIterationsReachedFlag = 1

@@ -23,7 +23,7 @@ import org.apache.spark.ml.linalg.{Vector, Vectors}
 import org.apache.spark.storage.StorageLevel
 
 /**
- * Implements the Orthant-wise Limited Memory QuasiNewton method based on `VectorFreeLBFGS`,
+ * Implements the Orthant-wise Limited Memory QuasiNewton method based on `VLBFGS`,
  * which is a variant of LBFGS that handles L1 regularization.
  *
  * Paper is Andrew and Gao (2007) Scalable Training of L1-Regularized Log-Linear Models
@@ -37,13 +37,13 @@ import org.apache.spark.storage.StorageLevel
  * @param tolerance the convergence tolerance of iterations.
  * @param eagerPersist whether eagerly persist distributed vectors when calculating.
  */
-class VectorFreeOWLQN (
+class VOWLQN (
     maxIter: Int,
     m: Int,
     l1RegValue: (Double, Boolean),
     l1RegDV: DistributedVector,
     tolerance: Double,
-    eagerPersist: Boolean) extends VectorFreeLBFGS(maxIter, m, tolerance, eagerPersist) { optimizer =>
+    eagerPersist: Boolean) extends VLBFGS(maxIter, m, tolerance, eagerPersist) { optimizer =>
 
   def this(maxIter: Int, m: Int, l1Reg: DistributedVector, tolerance: Double, eagerPersist: Boolean) = {
     this(maxIter, m, null, l1Reg, tolerance, eagerPersist = eagerPersist)

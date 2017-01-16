@@ -22,7 +22,7 @@ import java.util.Random
 import breeze.linalg.{DenseVector => BDV}
 import org.apache.spark.SparkContext
 import org.apache.spark.ml.linalg.distributed.DistributedVector
-import org.apache.spark.ml.optim.{VDiffFunction, VectorFreeLBFGS}
+import org.apache.spark.ml.optim.{VDiffFunction, VLBFGS}
 import org.apache.spark.ml.util.VUtils
 import org.apache.spark.sql.SparkSession
 
@@ -46,7 +46,7 @@ object RosenbrockExample {
     val partNum = VUtils.getNumBlocks(partSize, dimension)
     println(s"----------run bm=$bm, dimension=$dimension, maxIter=$maxIter, partNum=${partNum}---------")
 
-    val vf_lbfgs = new VectorFreeLBFGS(maxIter, bm, eagerPersist = eagerPersist)
+    val vf_lbfgs = new VLBFGS(maxIter, bm, eagerPersist = eagerPersist)
 
     val initData: Array[Double] = Array.fill(dimension)(0.0)
       .map(x => rangeRandDouble(-10D, 10D, rand))
