@@ -17,20 +17,18 @@
 
 package org.apache.spark.ml.optim
 
-import java.util.concurrent.Executors
-
 import breeze.optimize.{DiffFunction, StepSizeUnderflow, StrongWolfeLineSearch}
 import breeze.util.Implicits.scEnrichIterator
 import org.apache.spark.internal.Logging
 import org.apache.spark.ml.linalg.distributed.{DistributedVector, DistributedVectors}
 import org.apache.spark.ml.linalg.{BLAS, Vector}
-import org.apache.spark.rdd.{RDD, VRDDFunctions}
+import org.apache.spark.rdd.VRDDFunctions
 import org.apache.spark.storage.StorageLevel
 
 import scala.collection.mutable.ArrayBuffer
 
 /**
- * Implements vector free LBFGS
+ * Implements Vector-free LBFGS on Apache Spark
  *
  * Special note for LBFGS:
  *  If you use it in published work, you must cite one of:
@@ -40,8 +38,9 @@ import scala.collection.mutable.ArrayBuffer
  *    Scale  Optimization  (1989),  Mathematical  Programming  B,  45,  3,
  *    pp. 503-528.
  *
- * Vector-free LBFGS paper:
- *  * wzchen,zhwang,jrzhou, microsoft, Large-scale L-BFGS using MapReduce
+ * Vector-free LBFGS:
+ *  * Weizhu Chen, Zhenghao Wang and Jingren Zhou. Large-scale L-BFGS using MapReduce.
+ *  Neural Information Processing Systems (NIPS) 2014.
  *
  * @param maxIter max iteration number.
  * @param m correction number for LBFGS. 3 to 7 is usually sufficient.
@@ -50,7 +49,7 @@ import scala.collection.mutable.ArrayBuffer
  */
 class VectorFreeLBFGS(
     maxIter: Int,
-    m: Int = 7,
+    m: Int = 10,
     tolerance: Double = 1E-9,
     eagerPersist: Boolean = true) extends Logging {
 
@@ -64,12 +63,11 @@ class VectorFreeLBFGS(
   type History = VectorFreeLBFGS.History
 
   // return Tuple(newValue, newAdjValue, newX, newGrad, newAdjGrad)
-  protected def determineStepSizeAndTakeStep(
+  protected def determineAndTakeStepSize(
       state: State,
       fn: VDiffFunction,
       direction: DistributedVector): (Double, Double, DistributedVector, DistributedVector, DistributedVector) = {
     // using strong wolfe line search
-    val x = state.x
     val grad = state.grad
 
     val lineSearchDiffFn = new VLBFGSLineSearchDiffFun(state, direction, fn, eagerPersist)
@@ -102,12 +100,18 @@ class VectorFreeLBFGS(
     (newValue, newValue, newX, newGrad, newGrad)
   }
 
-  protected def takeStep(state: this.State, dir: DistributedVector, stepSize: Double): DistributedVector = {
+  protected def takeStep(
+      state: this.State,
+      dir: DistributedVector,
+      stepSize: Double): DistributedVector = {
     state.x.addScaledVector(stepSize, dir)
       .persist(StorageLevel.MEMORY_AND_DISK, eager = eagerPersist)
   }
 
-  protected def adjust(newX: DistributedVector, newGrad: DistributedVector, newVal: Double): (Double, DistributedVector) = (newVal, newGrad)
+  protected def adjust(
+      newX: DistributedVector,
+      newGrad: DistributedVector,
+      newVal: Double): (Double, DistributedVector) = (newVal, newGrad)
 
   // convergence check here is exactly the same as the one in breeze LBFGS
   protected def checkConvergence(state: State): Int = {
@@ -139,14 +143,17 @@ class VectorFreeLBFGS(
 
   // VectorFreeOWLQN will override this method
   def chooseDescentDirection(history: this.History, state: this.State): DistributedVector = {
-    val dir = history.computeDirection(state.x, state.grad, state.adjustedGradient)
-    dir.persist(StorageLevel.MEMORY_AND_DISK, eager = eagerPersist)
+    val direction = history.computeDirection(state.x, state.grad, state.adjustedGradient)
+    direction.persist(StorageLevel.MEMORY_AND_DISK, eager = eagerPersist)
   }
 
   // the `fn` is responsible for output `grad` persist.
   // the `init` must be persisted before this interface called.
-  def iterations(fn: VDiffFunction, init: DistributedVector,
+  def iterations(
+      fn: VDiffFunction,
+      init: DistributedVector,
       shouldCheckpoint: Int => Boolean = _ => false): Iterator[State] = {
+
     val history: HistoryImpl = HistoryImpl(m, eagerPersist)
 
     val state0 = initialState(fn, init)
@@ -155,9 +162,7 @@ class VectorFreeLBFGS(
       try {
         val dir = chooseDescentDirection(history, state)
         assert(dir.isPersisted)
-        val (value, adjValue, x, grad, adjGrad) = determineStepSizeAndTakeStep(state, fn, dir)
-
-
+        val (value, adjValue, x, grad, adjGrad) = determineAndTakeStepSize(state, fn, dir)
 
         val newIter = state.iter + 1
 
@@ -166,7 +171,7 @@ class VectorFreeLBFGS(
         if (shouldCheckpoint(newIter)) {
           // checkpoint the whole status at current position,
           // including `state.x`, `state.grad`, `state.adjustedGradient` (if exists),
-          // `m - 1` numbers of `S` vectors and `m - 1` numbers of `Y` vectors in LBFGS history.
+          // `m - 1` numbers of `S` vectors and `m - 1` numbers of `Y` vectors in LBFGS history,
           // and `lastX` and `lastGrad` vector.
           val checkpointBuff = new ArrayBuffer[DistributedVector]()
           checkpointBuff += x
@@ -183,16 +188,15 @@ class VectorFreeLBFGS(
 
           checkpointList = checkpointBuff.toArray.filter(_ != null)
           // checkpoint these vectors in parallel, and force trigger checkpoint immediately
-          checkpointList.par.map(_.checkpoint(true, true)).foreach(_.unpersist())
+          checkpointList.par.map(_.checkpoint(isRDDAlreadyComputed = true, eager = true))
+            .foreach(_.unpersist())
 
-          // After new checkpoint tasks done, we can delete old checkpointed distributed vectors
+          // After new checkpoint tasks done, we can delete old checkpointed distributed vectors.
           state.checkpointList.par.foreach(_.deleteCheckpoint())
         }
 
-        val newState = new State(x, value, grad, adjValue,
-          adjGrad, newIter, state.initialAdjVal,
-          (state.fValHistory :+ value).takeRight(fvalMemory),
-          NotConvergedFlag, dir, checkpointList)
+        val newState = new State(x, value, grad, adjValue, adjGrad, newIter, state.initialAdjVal,
+          (state.fValHistory :+ value).takeRight(fvalMemory), NotConvergedFlag, dir, checkpointList)
 
         newState.convergenceFlag = checkConvergence(newState)
 
@@ -345,8 +349,8 @@ object VectorFreeLBFGS {
     val fValHistory: IndexedSeq[Double],
     var convergenceFlag: Int,
     var direction: DistributedVector,
-    var checkpointList: Array[DistributedVector])
-  {
+    var checkpointList: Array[DistributedVector]) {
+
     def dispose(iterationFinished: Boolean) = {
       // If iteration hasn't finished,
       // releasing `x` and `grad` should be postponed to next iteration
@@ -373,7 +377,7 @@ object VectorFreeLBFGS {
     def computeDirection(newX: DistributedVector, newGrad: DistributedVector, newAdjGrad: DistributedVector): DistributedVector
   }
 
-  case class HistoryImpl(m: Int, eagerPersist: Boolean) extends History{
+  case class HistoryImpl(m: Int, eagerPersist: Boolean) extends History {
     require(m > 0)
 
     private var k = 0

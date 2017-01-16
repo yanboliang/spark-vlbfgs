@@ -39,71 +39,68 @@ class VectorFreeLBFGSSuite extends SparkFunSuite with MLlibTestSparkContext {
     super.beforeAll()
   }
 
-  test ("quadratic-test") {
+  test("quadratic-test") {
     val rand = new Random(100)
 
     val lbfgs = new BreezeLBFGS[BDV[Double]](100, 10)
-    val vf_lbfgs = new VectorFreeLBFGS(100, 10)
+    val vlbfgs = new VectorFreeLBFGS(100, 10)
 
     val initData: Array[Double] = Array.fill(10)(0.0)
       .map(x => rangeRandDouble(-10D, 10D, rand))
 
     val initBDV = new BDV(initData.clone())
 
-    val initDisV = VUtils.splitArrIntoDV(sc, initData, 5, 2)
+    val initDV = VUtils.splitArrIntoDV(sc, initData, 5, 2)
       .persist(StorageLevel.MEMORY_AND_DISK, eager = true)
 
-    val df = new BDF[BDV[Double]] {
+    val bDiffFun = new BDF[BDV[Double]] {
       def calculate(x: BDV[Double]) = {
         (Bnorm((x - 3.0) :^ 2.0, 1), (x :* 2.0) :- 6.0)
       }
     }
-    val vf_df = new VDiffFunction {
+    val vDiffFun = new VDiffFunction {
       def calculate(x: DistributedVector) = {
         val n = x.add(-3.0).norm
         (n * n, x.scale(2.0).add(-6.0).persist(StorageLevel.MEMORY_AND_DISK, eager = true))
       }
     }
 
-    val lbfgsIter = lbfgs.iterations(df, initBDV)
-    val vf_lbfgsIter = vf_lbfgs.iterations(vf_df, initDisV)
+    val lbfgsIter = lbfgs.iterations(bDiffFun, initBDV)
+    val vlbfgsIter = vlbfgs.iterations(vDiffFun, initDV)
 
-    var state: lbfgs.State = null
-    var vf_state: vf_lbfgs.State = null
+    var bState: lbfgs.State = null
+    var vState: vlbfgs.State = null
 
     while (lbfgsIter.hasNext) {
-      state = lbfgsIter.next()
+      bState = lbfgsIter.next()
     }
 
-    while (vf_lbfgsIter.hasNext) {
-      vf_state = vf_lbfgsIter.next()
+    while (vlbfgsIter.hasNext) {
+      vState = vlbfgsIter.next()
     }
 
-    assert(vf_state.x.toLocal ~== Vectors.fromBreeze(state.x) relTol 1E-3)
+    assert(vState.x.toLocal ~== Vectors.fromBreeze(bState.x) relTol 1E-3)
   }
 
 
-  def testRosenbrock(bm: Int, maxIter: Int, dimension: Int): Unit = {
+  def testRosenbrock(m: Int, maxIter: Int, dimension: Int): Unit = {
     val rand = new Random(100)
 
-    val partSize = 3
-    val partNum = VUtils.getNumBlocks(partSize, dimension)
-    println(s"----------test bm=$bm, dimension=$dimension, maxIter=$maxIter, partNum=${partNum}---------")
+    val sizePerPart = 3
+    val numPartitions = VUtils.getNumBlocks(sizePerPart, dimension)
+    println(s"TEST: m=$m, dimension=$dimension, maxIter=$maxIter, numPartitions=$numPartitions")
 
-    val totalSize = dimension
+    val lbfgs = new BreezeLBFGS[BDV[Double]](maxIter, m)
+    val vlbfgs = new VectorFreeLBFGS(maxIter, m)
 
-    val lbfgs = new BreezeLBFGS[BDV[Double]](maxIter, bm)
-    val vf_lbfgs = new VectorFreeLBFGS(maxIter, bm)
-
-    val initData: Array[Double] = Array.fill(dimension)(0.0)
-      .map(x => rangeRandDouble(-10D, 10D, rand))
+    val initData: Array[Double] = Array.fill(dimension)(0.0).map { x =>
+      rangeRandDouble(-10D, 10D, rand)
+    }
 
     val initBDV = new BDV(initData.clone())
-
-    val initDisV = VUtils.splitArrIntoDV(sc, initData, partSize, partNum).persist()
+    val initDV = VUtils.splitArrIntoDV(sc, initData, sizePerPart, numPartitions).persist()
 
     def calc(x: BDV[Double]): (Double, BDV[Double]) = {
-
       var fx = 0.0
       val g = BDV.zeros[Double](x.length)
 
@@ -117,41 +114,40 @@ class VectorFreeLBFGSSuite extends SparkFunSuite with MLlibTestSparkContext {
       fx -> g
     }
 
-    val df = new BDF[BDV[Double]] {
+    val bDiffFun = new BDF[BDV[Double]] {
       def calculate(x: BDV[Double]) = calc(x)
     }
-    val vf_df = new VDiffFunction {
+    val vDiffFun = new VDiffFunction {
       def calculate(x: DistributedVector) = {
         val r = calc(new BDV(x.toLocal.toArray))
         val rr = r._2.toArray
-        (r._1, VUtils.splitArrIntoDV(sc, rr, partSize, partNum).persist())
+        (r._1, VUtils.splitArrIntoDV(sc, rr, sizePerPart, numPartitions).persist())
       }
     }
 
-    val lbfgsIter = lbfgs.iterations(df, initBDV)
-    val vf_lbfgsIter = vf_lbfgs.iterations(vf_df, initDisV, iter => iter % 15 == 0)
+    val lbfgsIter = lbfgs.iterations(bDiffFun, initBDV)
+    val vlbfgsIter = vlbfgs.iterations(vDiffFun, initDV, iter => iter % 15 == 0)
 
-    var state: lbfgs.State = null
-    var vf_state: vf_lbfgs.State = null
+    var bState: lbfgs.State = null
+    var vState: vlbfgs.State = null
 
     while (lbfgsIter.hasNext) {
-      state = lbfgsIter.next()
-      println(s"br_x${state.iter}: ${state.x}")
+      bState = lbfgsIter.next()
+      println(s"breeze lbfgs: x${bState.iter}: ${bState.x}")
     }
 
-    while (vf_lbfgsIter.hasNext) {
-      vf_state = vf_lbfgsIter.next()
-      println(s"vf_x${vf_state.iter}: ${vf_state.x.toLocal}")
+    while (vlbfgsIter.hasNext) {
+      vState = vlbfgsIter.next()
+      println(s"v-lbfgs: x${vState.iter}: ${vState.x.toLocal}")
     }
 
-    assert(vf_state.x.toLocal ~== Vectors.fromBreeze(state.x) relTol 0.1)
+    assert(vState.x.toLocal ~== Vectors.fromBreeze(bState.x) relTol 0.1)
   }
 
   test("lbfgs-c rosenbrock example") {
-
-    for (bm <- 4 to 10) {
+    for (m <- 4 to 10) {
       for (dimension <- 4 to 6 by 2) {
-        testRosenbrock(bm, 20, dimension)
+        testRosenbrock(m, 20, dimension)
       }
     }
   }

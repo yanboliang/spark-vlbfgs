@@ -43,16 +43,13 @@ class VectorFreeOWLQN (
     l1RegValue: (Double, Boolean),
     l1RegDV: DistributedVector,
     tolerance: Double,
-    eagerPersist: Boolean)
-
-  extends VectorFreeLBFGS(maxIter, m, tolerance, eagerPersist) { optimizer =>
+    eagerPersist: Boolean) extends VectorFreeLBFGS(maxIter, m, tolerance, eagerPersist) { optimizer =>
 
   def this(maxIter: Int, m: Int, l1Reg: DistributedVector, tolerance: Double, eagerPersist: Boolean) = {
     this(maxIter, m, null, l1Reg, tolerance, eagerPersist = eagerPersist)
   }
 
-  def this(maxIter: Int, m: Int, l1RegValue: (Double, Boolean), tolerance: Double,
-      eagerPersist: Boolean) = {
+  def this(maxIter: Int, m: Int, l1RegValue: (Double, Boolean), tolerance: Double, eagerPersist: Boolean) = {
     this(maxIter, m, l1RegValue, null, tolerance, eagerPersist = eagerPersist)
   }
 
@@ -69,9 +66,9 @@ class VectorFreeOWLQN (
     // in the same directional (within the same hypercube) as the adjusted gradient for proof.
     // Although this doesn't seem to affect the outcome that much in most of cases, there are some cases
     // where the algorithm won't converge (confirmed with the author, Galen Andrew).
-    val dir = history.computeDirection(state.x, state.grad, state.adjustedGradient)
-    val correctedDir = dir.zipPartitions(state.adjustedGradient) {
-      (partDir: Vector, partAdjustedGrad: Vector) =>
+    val direction = history.computeDirection(state.x, state.grad, state.adjustedGradient)
+    val correctedDir = direction.zipPartitions(state.adjustedGradient) {
+      case (partDir: Vector, partAdjustedGrad: Vector) =>
         val res = new Array[Double](partDir.size)
         partDir.foreachActive{ (index: Int, dirValue: Double) =>
           val adjustedGradValue = partAdjustedGrad(index)
@@ -83,12 +80,14 @@ class VectorFreeOWLQN (
   }
 
   override protected def takeStep(
-      state: State, dir: DistributedVector, stepSize: Double): DistributedVector = {
+      state: State,
+      dir: DistributedVector,
+      stepSize: Double): DistributedVector = {
     assert(state.adjustedGradient.isPersisted)
-    // projects x to be on the same orthant as y
+    // projects x to be on the same orthant as y,
     // this basically requires that x'_i = x_i if sign(x_i) == sign(y_i), and 0 otherwise.
     val newX = state.x.zipPartitions(dir, state.adjustedGradient) {
-      (partX: Vector, partDir: Vector, partAdjGrad: Vector) =>
+      case (partX: Vector, partDir: Vector, partAdjGrad: Vector) =>
         val res = new Array[Double](partX.size)
         var i = 0
         while (i < partX.size) {
@@ -108,15 +107,19 @@ class VectorFreeOWLQN (
   }
 
   // Adds in the regularization stuff to the gradient(pseudo-gradient)
-  override protected def adjust(newX: DistributedVector, newGrad: DistributedVector, newVal: Double): (Double, DistributedVector) = {
+  override protected def adjust(
+      newX: DistributedVector,
+      newGrad: DistributedVector,
+      newVal: Double): (Double, DistributedVector) = {
     /**
-     * calculate objective L1 reg value contributed by this component,
-     *  and the component of pseudo gradient with L1
+     * Calculate objective L1 reg value contributed by this component,
+     * and the component of pseudo gradient with L1
      */
     val calculateComponentWithL1 = (vX: Double, vGrad: Double, l1Reg: Double) => {
       require(l1Reg >= 0.0)
-      if (l1Reg == 0.0) (0.0, vGrad)
-      else {
+      if (l1Reg == 0.0) {
+        (0.0, vGrad)
+      } else {
         val l1RegItem = Math.abs(l1Reg * vX)
 
         val vGradWithL1 = vX match {
@@ -135,7 +138,7 @@ class VectorFreeOWLQN (
     val l1ValueAccu = newX.values.sparkContext.doubleAccumulator
     val adjGrad = if (l1RegDV != null) {
       newX.zipPartitions(newGrad, l1RegDV) {
-        (partX: Vector, partGrad: Vector, partReg: Vector) =>
+        case (partX: Vector, partGrad: Vector, partReg: Vector) =>
           val res = Array.fill(partX.size)(0.0)
           var i = 0
           while (i < partX.size) {
@@ -152,14 +155,13 @@ class VectorFreeOWLQN (
 
       val numParts = newX.numPartitions
       newX.zipPartitionsWithIndex(newGrad) {
-        (pid: Int, partX: Vector, partGrad: Vector) =>
+        case (pid: Int, partX: Vector, partGrad: Vector) =>
           val res = Array.fill(partX.size)(0.0)
           var i = 0
           while (i < partX.size) {
-            val isIntercept = (withIntercept && pid == numParts - 1 && i == partX.size - 1)
+            val isIntercept = withIntercept && pid == numParts - 1 && i == partX.size - 1
             val realReg = if (isIntercept) 0.0 else localL1RegValue
-            val (l1Value, vAdjGrad) =
-              calculateComponentWithL1(partX(i), partGrad(i), realReg)
+            val (l1Value, vAdjGrad) = calculateComponentWithL1(partX(i), partGrad(i), realReg)
             l1ValueAccu.add(l1Value)
             res(i) = vAdjGrad
             i += 1
@@ -219,7 +221,7 @@ class VectorFreeOWLQN (
         lastAdjValue -> lastLineSearchGradValue
       } else {
         callCalcCount += 1
-        logInfo(s"Vector free OWLQN line search try step: ${alpha}")
+        logInfo(s"Vector free OWLQN line search try step: $alpha")
         // release unused RDDs
         disposeLastResult()
 
@@ -241,10 +243,9 @@ class VectorFreeOWLQN (
         lastValue = fnValue
         lastAdjValue = adjValue
 
-        val lineSearchFnGrad = adjGrad dot direction
-        lastLineSearchGradValue = lineSearchFnGrad
+        lastLineSearchGradValue = adjGrad dot direction
 
-        adjValue -> lineSearchFnGrad
+        adjValue -> lastLineSearchGradValue
       }
     }
 
@@ -270,7 +271,7 @@ class VectorFreeOWLQN (
   }
 
   // return Tuple(newValue, newAdjValue, newX, newGrad, newAdjGrad)
-  override protected def determineStepSizeAndTakeStep(
+  override protected def determineAndTakeStepSize(
       state: State,
       fn: VDiffFunction,
       direction: DistributedVector): (Double, Double, DistributedVector, DistributedVector, DistributedVector) = {

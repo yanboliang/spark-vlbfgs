@@ -39,68 +39,66 @@ class VectorFreeOWLQNSuite extends SparkFunSuite with MLlibTestSparkContext {
     super.beforeAll()
   }
 
-  test ("quadratic-test") {
+  test("quadratic-test") {
     val rand = new Random(100)
 
     val owlqn = new BreezeOWLQN[Int, BDV[Double]](100, 10, _ => 3.0)
-    val vf_owqln = new VectorFreeOWLQN(100, 10, (3.0, false))
+    val vowqln = new VectorFreeOWLQN(100, 10, (3.0, false))
 
     val initData: Array[Double] = Array.fill(10)(0.0)
       .map(x => rangeRandDouble(-10D, 10D, rand))
 
     val initBDV = new BDV(initData.clone())
 
-    val initDisV = VUtils.splitArrIntoDV(sc, initData, 5, 2)
+    val initDV = VUtils.splitArrIntoDV(sc, initData, 5, 2)
       .persist(StorageLevel.MEMORY_AND_DISK, eager = true)
 
-    val df = new BDF[BDV[Double]] {
+    val bDiffFun = new BDF[BDV[Double]] {
       def calculate(x: BDV[Double]) = {
         (Bnorm((x - 3.0) :^ 2.0, 1), (x :* 2.0) :- 6.0)
       }
     }
-    val vf_df = new VDiffFunction {
+    val vDiffFun = new VDiffFunction {
       def calculate(x: DistributedVector) = {
         val n = x.add(-3.0).norm
         (n * n, x.scale(2.0).add(-6.0).persist(StorageLevel.MEMORY_AND_DISK, eager = true))
       }
     }
 
-    val owlqnIter = owlqn.iterations(df, initBDV)
-    val vf_owlqnIter = vf_owqln.iterations(vf_df, initDisV)
+    val owlqnIter = owlqn.iterations(bDiffFun, initBDV)
+    val vowlqnIter = vowqln.iterations(vDiffFun, initDV)
 
-    var state: owlqn.State = null
-    var vf_state: vf_owqln.State = null
+    var bState: owlqn.State = null
+    var vState: vowqln.State = null
 
     while (owlqnIter.hasNext) {
-      state = owlqnIter.next()
+      bState = owlqnIter.next()
     }
 
-    while (vf_owlqnIter.hasNext) {
-      vf_state = vf_owlqnIter.next()
+    while (vowlqnIter.hasNext) {
+      vState = vowlqnIter.next()
     }
 
-    assert(vf_state.x.toLocal ~== Vectors.fromBreeze(state.x) relTol 1E-3)
+    assert(vState.x.toLocal ~== Vectors.fromBreeze(bState.x) relTol 1E-3)
   }
 
 
-  def testRosenbrock(bm: Int, maxIter: Int, dimension: Int): Unit = {
+  def testRosenbrock(m: Int, maxIter: Int, dimension: Int): Unit = {
     val rand = new Random(100)
 
-    val partSize = 3
-    val partNum = VUtils.getNumBlocks(partSize, dimension)
-    println(s"----------test bm=$bm, dimension=$dimension, maxIter=$maxIter, partNum=${partNum}---------")
+    val sizePerPart = 3
+    val numPartitions = VUtils.getNumBlocks(sizePerPart, dimension)
+    println(s"TEST: m=$m, dimension=$dimension, maxIter=$maxIter, numPartitions=$numPartitions")
 
-    val totalSize = dimension
-
-    val owlqn = new BreezeOWLQN[Int, BDV[Double]](maxIter, bm, _ => 3.0)
-    val vf_owlqn = new VectorFreeOWLQN(maxIter, bm, (3.0, false))
+    val owlqn = new BreezeOWLQN[Int, BDV[Double]](maxIter, m, _ => 3.0)
+    val vowlqn = new VectorFreeOWLQN(maxIter, m, (3.0, false))
 
     val initData: Array[Double] = Array.fill(dimension)(0.0)
       .map(x => rangeRandDouble(-10D, 10D, rand))
 
     val initBDV = new BDV(initData.clone())
 
-    val initDisV = VUtils.splitArrIntoDV(sc, initData, partSize, partNum).persist()
+    val initDV = VUtils.splitArrIntoDV(sc, initData, sizePerPart, numPartitions).persist()
 
     def calc(x: BDV[Double]): (Double, BDV[Double]) = {
 
@@ -117,67 +115,66 @@ class VectorFreeOWLQNSuite extends SparkFunSuite with MLlibTestSparkContext {
       fx -> g
     }
 
-    val df = new BDF[BDV[Double]] {
+    val bDiffFun = new BDF[BDV[Double]] {
       def calculate(x: BDV[Double]) = calc(x)
     }
-    val vf_df = new VDiffFunction {
+    val vDiffFun = new VDiffFunction {
       def calculate(x: DistributedVector) = {
         val r = calc(new BDV(x.toLocal.toArray))
         val rr = r._2.toArray
-        (r._1, VUtils.splitArrIntoDV(sc, rr, partSize, partNum).persist())
+        (r._1, VUtils.splitArrIntoDV(sc, rr, sizePerPart, numPartitions).persist())
       }
     }
 
-    val owlqnIter = owlqn.iterations(df, initBDV)
-    val vf_owlqnIter = vf_owlqn.iterations(vf_df, initDisV, iter => iter % 15 == 0)
+    val owlqnIter = owlqn.iterations(bDiffFun, initBDV)
+    val vowlqnIter = vowlqn.iterations(vDiffFun, initDV, iter => iter % 15 == 0)
 
-    var state: owlqn.State = null
-    var vf_state: vf_owlqn.State = null
+    var bState: owlqn.State = null
+    var vState: vowlqn.State = null
 
     while (owlqnIter.hasNext) {
-      state = owlqnIter.next()
-      println(s"br_x${state.iter}: ${state.x}")
+      bState = owlqnIter.next()
+      println(s"breeze owlqn x${bState.iter}: ${bState.x}")
     }
 
-    while (vf_owlqnIter.hasNext) {
-      vf_state = vf_owlqnIter.next()
-      println(s"vf_x${vf_state.iter}: ${vf_state.x.toLocal}")
+    while (vowlqnIter.hasNext) {
+      vState = vowlqnIter.next()
+      println(s"v-owlqn x${vState.iter}: ${vState.x.toLocal}")
     }
 
-    assert(vf_state.x.toLocal ~== Vectors.fromBreeze(state.x) relTol 0.1)
+    assert(vState.x.toLocal ~== Vectors.fromBreeze(bState.x) relTol 0.1)
 
     val l1RegArr: Array[Double] = Array.fill(dimension)(0.0)
       .map(x => rangeRandDouble(1D, 10D, rand))
 
-    val l1RegDV = VUtils.splitArrIntoDV(sc, l1RegArr, partSize, partNum).persist()
-    initDisV.persist()
-    val owlqn2 = new BreezeOWLQN[Int, BDV[Double]](maxIter, bm, (k:Int) => l1RegArr(k))
-    val vf_owlqn2 = new VectorFreeOWLQN(maxIter, bm, l1RegDV)
+    val l1RegDV = VUtils.splitArrIntoDV(sc, l1RegArr, sizePerPart, numPartitions).persist()
+    initDV.persist()
+    val owlqn2 = new BreezeOWLQN[Int, BDV[Double]](maxIter, m, (k:Int) => l1RegArr(k))
+    val vowlqn2 = new VectorFreeOWLQN(maxIter, m, l1RegDV)
 
-    val owlqnIter2 = owlqn2.iterations(df, initBDV)
-    val vf_owlqnIter2 = vf_owlqn2.iterations(vf_df, initDisV, iter => iter % 15 == 0)
+    val owlqnIter2 = owlqn2.iterations(bDiffFun, initBDV)
+    val vowlqnIter2 = vowlqn2.iterations(vDiffFun, initDV, iter => iter % 15 == 0)
 
-    var state2: owlqn2.State = null
-    var vf_state2: vf_owlqn2.State = null
+    var bState2: owlqn2.State = null
+    var vState2: vowlqn2.State = null
 
     while (owlqnIter2.hasNext) {
-      state2 = owlqnIter2.next()
-      println(s"br2_x${state2.iter}: ${state2.x}")
+      bState2 = owlqnIter2.next()
+      println(s"breeze owlqn x${bState2.iter}: ${bState2.x}")
     }
 
-    while (vf_owlqnIter2.hasNext) {
-      vf_state2 = vf_owlqnIter2.next()
-      println(s"vf2_x${vf_state2.iter}: ${vf_state2.x.toLocal}")
+    while (vowlqnIter2.hasNext) {
+      vState2 = vowlqnIter2.next()
+      println(s"v-owlqn x${vState2.iter}: ${vState2.x.toLocal}")
     }
 
-    assert(vf_state2.x.toLocal ~== Vectors.fromBreeze(state2.x) relTol 0.1)
+    assert(vState2.x.toLocal ~== Vectors.fromBreeze(bState2.x) relTol 0.1)
   }
 
   test("lbfgs-c rosenbrock example") {
-
-    for (bm <- 4 to 6) {
+    for (m <- 4 to 6) {
       for (dimension <- 4 to 6 by 2) {
-        testRosenbrock(bm, 20, dimension)
+        testRosenbrock(m, 20, dimension)
       }
     }
   }
