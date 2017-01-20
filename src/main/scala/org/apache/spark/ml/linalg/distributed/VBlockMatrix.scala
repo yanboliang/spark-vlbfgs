@@ -30,47 +30,46 @@ class VBlockMatrix(
     val rowsPerBlock: Int,
     val colsPerBlock: Int,
     val blocks: RDD[((Int, Int), SparseMatrix)],
-    val gridPartitioner: VGridPartitioner
-  ) {
+    val gridPartitioner: VGridPartitioner) {
 
   final val mapJoinPartitionsShuffleRdd2 =
     System.getProperty("vflbfgs.mapJoinPartitions.shuffleRdd2", "true").toBoolean
 
-  def horizontalZipVec[T: ClassTag](vec: DistributedVector)(
+  def horizontalZipVector[T: ClassTag](vector: DistributedVector)(
       f: (((Int, Int), SparseMatrix, Vector) => T)
     ): RDD[((Int, Int), T)] = {
 
     import org.apache.spark.rdd.VRDDFunctions._
 
     val gridPartitionerParam = gridPartitioner
-    require(gridPartitionerParam.colBlocks == vec.numPartitions)
-    blocks.mapJoinPartition(vec.values, mapJoinPartitionsShuffleRdd2)(
+    require(gridPartitionerParam.colBlocks == vector.numPartitions)
+    blocks.mapJoinPartition(vector.values, mapJoinPartitionsShuffleRdd2)(
       (pid: Int) => {
         // pid is the partition ID of blockMatrix RDD
         val colPartId = gridPartitionerParam.colPartId(pid)
-        val startIdx = colPartId * gridPartitionerParam.colsPerBlock
-        var endIdx = startIdx + gridPartitionerParam.colsPerBlock
+        val startIdx = colPartId * gridPartitionerParam.colBlocksPerPart
+        var endIdx = startIdx + gridPartitionerParam.colBlocksPerPart
         if (endIdx > gridPartitionerParam.colBlocks) endIdx = gridPartitionerParam.colBlocks
-        (startIdx until endIdx).toArray // The corresponding partition ID of dvec
+        (startIdx until endIdx).toArray // The corresponding partition ID of `vector`
       },
-      (pid: Int, mIter: Iterator[((Int, Int), SparseMatrix)],
-       vIters: Array[(Int, Iterator[Vector])]) => {
+      (pid: Int,
+       mIter: Iterator[((Int, Int), SparseMatrix)],
+       vIter: Array[(Int, Iterator[Vector])]) => {
         val vMap = new HashMap[Int, Vector]
-        vIters.foreach {
-          case (colId: Int, iter: Iterator[Vector]) =>
+        vIter.foreach { case (colId: Int, iter: Iterator[Vector]) =>
             val v = iter.next()
             assert(!iter.hasNext)
             vMap += (colId -> v)
         }
         mIter.map { case ((rowBlockIdx: Int, colBlockIdx: Int), sm: SparseMatrix) =>
-          val vecPart = vMap(colBlockIdx)
-          ((rowBlockIdx, colBlockIdx), f((rowBlockIdx, colBlockIdx), sm, vecPart))
+          val partVector = vMap(colBlockIdx)
+          ((rowBlockIdx, colBlockIdx), f((rowBlockIdx, colBlockIdx), sm, partVector))
         }
       }
     )
   }
 
-  def verticalZipVec[T: ClassTag](vec: DistributedVector)(
+  def verticalZipVector[T: ClassTag](vec: DistributedVector)(
       f: (((Int, Int), SparseMatrix, Vector) => T)
     ): RDD[((Int, Int), T)] = {
 
@@ -81,39 +80,39 @@ class VBlockMatrix(
     blocks.mapJoinPartition(vec.values, mapJoinPartitionsShuffleRdd2)(
       (pid: Int) => {
         val rowPartId = gridPartitionerParam.rowPartId(pid)
-        val startIdx = rowPartId * gridPartitionerParam.rowsPerBlock
-        var endIdx = startIdx + gridPartitionerParam.rowsPerBlock
+        val startIdx = rowPartId * gridPartitionerParam.rowBlocksPerPart
+        var endIdx = startIdx + gridPartitionerParam.rowBlocksPerPart
         if (endIdx > gridPartitionerParam.rowBlocks) endIdx = gridPartitionerParam.rowBlocks
         (startIdx until endIdx).toArray
       },
       (pid: Int, mIter: Iterator[((Int, Int), SparseMatrix)],
-       vIters: Array[(Int, Iterator[Vector])]) => {
+       vIter: Array[(Int, Iterator[Vector])]) => {
         val vMap = new HashMap[Int, Vector]
-        vIters.foreach {
+        vIter.foreach {
           case (rowId: Int, iter: Iterator[Vector]) =>
             val v = iter.next()
             assert(!iter.hasNext)
             vMap += (rowId -> v)
         }
         mIter.map { case ((rowBlockIdx: Int, colBlockIdx: Int), sm: SparseMatrix) =>
-          val horzPart = vMap(rowBlockIdx)
-          ((rowBlockIdx, colBlockIdx), f((rowBlockIdx, colBlockIdx), sm, horzPart))
+          val partVector = vMap(rowBlockIdx)
+          ((rowBlockIdx, colBlockIdx), f((rowBlockIdx, colBlockIdx), sm, partVector))
         }
       }
     )
   }
 
-  def horizontalZipVecMap(vec: DistributedVector)(
+  def horizontalZipVector2(vector: DistributedVector)(
     f: (((Int, Int), SparseMatrix, Vector) => SparseMatrix)
   ): VBlockMatrix = {
-    val newBlocks = horizontalZipVec(vec)(f)
+    val newBlocks = horizontalZipVector(vector)(f)
     new VBlockMatrix(rowsPerBlock, colsPerBlock, newBlocks, gridPartitioner)
   }
 
-  def verticalZipVecMap(vec: DistributedVector)(
+  def verticalZipVector2(vector: DistributedVector)(
     f: (((Int, Int), SparseMatrix, Vector) => SparseMatrix)
   ): VBlockMatrix = {
-    val newBlocks = verticalZipVec(vec)(f)
+    val newBlocks = verticalZipVector(vector)(f)
     new VBlockMatrix(rowsPerBlock, colsPerBlock, newBlocks, gridPartitioner)
   }
 
@@ -126,16 +125,16 @@ class VBlockMatrix(
 private[spark] class VGridPartitioner(
     val rowBlocks: Int,
     val colBlocks: Int,
-    val rowsPerBlock: Int,
-    val colsPerBlock: Int) extends Partitioner {
+    val rowBlocksPerPart: Int,
+    val colBlocksPerPart: Int) extends Partitioner {
 
   require(rowBlocks > 0)
   require(colBlocks > 0)
-  require(rowsPerBlock > 0)
-  require(colsPerBlock > 0)
+  require(rowBlocksPerPart > 0)
+  require(colBlocksPerPart > 0)
 
-  val rowPartitions = math.ceil(rowBlocks * 1.0 / rowsPerBlock).toInt
-  val colPartitions = math.ceil(colBlocks * 1.0 / colsPerBlock).toInt
+  val rowPartitions = math.ceil(rowBlocks * 1.0 / rowBlocksPerPart).toInt
+  val colPartitions = math.ceil(colBlocks * 1.0 / colBlocksPerPart).toInt
 
   override val numPartitions: Int = rowPartitions * colPartitions
 
@@ -163,7 +162,7 @@ private[spark] class VGridPartitioner(
   private def getPartitionId(i: Int, j: Int): Int = {
     require(0 <= i && i < rowBlocks, s"Row index $i out of range [0, $rowBlocks).")
     require(0 <= j && j < colBlocks, s"Column index $j out of range [0, $colBlocks).")
-    i / rowsPerBlock + j / colsPerBlock * rowPartitions
+    i / rowBlocksPerPart + j / colBlocksPerPart * rowPartitions
   }
 
   def rowPartId(partId: Int) = partId % rowPartitions
@@ -173,7 +172,7 @@ private[spark] class VGridPartitioner(
     obj match {
       case r: VGridPartitioner =>
         (this.rowBlocks == r.rowBlocks) && (this.colBlocks == r.colBlocks) &&
-          (this.rowsPerBlock == r.rowsPerBlock) && (this.colsPerBlock == r.colsPerBlock)
+          (this.rowBlocksPerPart == r.rowBlocksPerPart) && (this.colBlocksPerPart == r.colBlocksPerPart)
       case _ =>
         false
     }
@@ -183,24 +182,24 @@ private[spark] class VGridPartitioner(
     com.google.common.base.Objects.hashCode(
       rowBlocks: java.lang.Integer,
       colBlocks: java.lang.Integer,
-      rowsPerBlock: java.lang.Integer,
-      colsPerBlock: java.lang.Integer)
+      rowBlocksPerPart: java.lang.Integer,
+      colBlocksPerPart: java.lang.Integer)
   }
 }
 
 private[spark] object VGridPartitioner {
 
   /** Creates a new [[VGridPartitioner]] instance. */
-  def apply(rowBlocks: Int, colBlocks: Int, rowsPerBlock: Int, colsPerBlock: Int): VGridPartitioner = {
-    new VGridPartitioner(rowBlocks, colBlocks, rowsPerBlock, colsPerBlock)
+  def apply(rowBlocks: Int, colBlocks: Int, rowBlocksPerPart: Int, colBlocksPerPart: Int): VGridPartitioner = {
+    new VGridPartitioner(rowBlocks, colBlocks, rowBlocksPerPart, colBlocksPerPart)
   }
 
   /** Creates a new [[VGridPartitioner]] instance with the input suggested number of partitions. */
   def apply(rowBlocks: Int, colBlocks: Int, suggestedNumPartitions: Int): VGridPartitioner = {
     require(suggestedNumPartitions > 0)
     val scale = 1.0 / math.sqrt(suggestedNumPartitions)
-    val rowsPerPart = math.round(math.max(scale * rowBlocks, 1.0)).toInt
-    val colsPerPart = math.round(math.max(scale * colBlocks, 1.0)).toInt
-    new VGridPartitioner(rowBlocks, colBlocks, rowsPerPart, colsPerPart)
+    val rowBlocksPerPart = math.round(math.max(scale * rowBlocks, 1.0)).toInt
+    val colBlocksPerPart = math.round(math.max(scale * colBlocks, 1.0)).toInt
+    new VGridPartitioner(rowBlocks, colBlocks, rowBlocksPerPart, colBlocksPerPart)
   }
 }

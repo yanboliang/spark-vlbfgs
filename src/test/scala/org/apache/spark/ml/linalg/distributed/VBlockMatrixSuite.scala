@@ -29,28 +29,28 @@ class VBlockMatrixSuite extends SparkFunSuite with MLlibTestSparkContext {
     super.beforeAll()
   }
 
-  def testBlockMatrixHorzZipVecFunc(
+  def testHorizontalZipVector(
       rowBlocks: Int,
       colBlocks: Int,
-      rowsPerBlock: Int,
-      colsPerBlock: Int,
+      rowBlocksPerPart: Int,
+      colBlocksPerPart: Int,
       shuffleRdd2: Boolean) = {
-    val arrMatrix = Array.tabulate(rowBlocks * colBlocks) { idx =>
+    val blocks = Array.tabulate(rowBlocks * colBlocks) { idx =>
       val rowIdx = idx % rowBlocks
       val colIdx = idx / rowBlocks
       ((rowIdx, colIdx),
         SparseMatrix.fromCOO(1, 2, Array((0, 0, rowIdx.toDouble), (0, 1, colIdx.toDouble)))
         )
     }
-    val gridPartitioner = VGridPartitioner(rowBlocks, colBlocks, rowsPerBlock, colsPerBlock)
-    val blockMatrix = new VBlockMatrix(rowsPerBlock, colsPerBlock,
-      sc.parallelize(arrMatrix).partitionBy(gridPartitioner), gridPartitioner)
-    val arrVec = Array.tabulate(colBlocks)(idx => idx.toDouble)
-    val dvec = splitArrIntoDV(sc, arrVec, 1, colBlocks)
-    val f = (blockCoords: (Int, Int), sv: SparseMatrix, v: Vector) => {
-      (sv(0, 0), sv(0, 1), v(0))
+    val gridPartitioner = VGridPartitioner(rowBlocks, colBlocks, rowBlocksPerPart, colBlocksPerPart)
+    val blockMatrix = new VBlockMatrix(rowBlocksPerPart, colBlocksPerPart,
+      sc.parallelize(blocks).partitionBy(gridPartitioner), gridPartitioner)
+    val arrayData = Array.tabulate(colBlocks)(idx => idx.toDouble)
+    val dVector = splitArrIntoDV(sc, arrayData, 1, colBlocks)
+    val f = (blockCoordinate: (Int, Int), block: SparseMatrix, v: Vector) => {
+      (block(0, 0), block(0, 1), v(0))
     }
-    val res0 = blockMatrix.horizontalZipVec(dvec)(f)
+    val res0 = blockMatrix.horizontalZipVector(dVector)(f)
       .map(x => (x._1._1, x._2))
     val res = res0.map { v =>
       (v._1, v._2._1.toInt, v._2._2.toInt, v._2._3.toInt)
@@ -66,28 +66,28 @@ class VBlockMatrixSuite extends SparkFunSuite with MLlibTestSparkContext {
     })
   }
 
-  def testBlockMatrixVertZipVecFunc(
+  def testVerticalZipVector(
       rowBlocks: Int,
       colBlocks: Int,
-      rowsPerBlock: Int,
-      colsPerBlock: Int,
+      rowBlocksPerPart: Int,
+      colBlocksPerPart: Int,
       shuffleRdd2: Boolean) = {
-    val arrMatrix = Array.tabulate(rowBlocks * colBlocks) { idx =>
+    val blocks = Array.tabulate(rowBlocks * colBlocks) { idx =>
       val rowIdx = idx % rowBlocks
       val colIdx = idx / rowBlocks
       ((rowIdx, colIdx),
         SparseMatrix.fromCOO(1, 2, Array((0, 0, rowIdx.toDouble), (0, 1, colIdx.toDouble)))
         )
     }
-    val gridPartitioner = VGridPartitioner(rowBlocks, colBlocks, rowsPerBlock, colsPerBlock)
-    val blockMatrix = new VBlockMatrix(rowsPerBlock, colsPerBlock,
-      sc.parallelize(arrMatrix).partitionBy(gridPartitioner), gridPartitioner)
-    val arrVec = Array.tabulate(rowBlocks)(idx => idx.toDouble)
-    val dvec = VUtils.splitArrIntoDV(sc, arrVec, 1, rowBlocks)
-    val f = (blockCoords: (Int, Int), sv: SparseMatrix, v: Vector) => {
-      (sv(0, 0), sv(0, 1), v(0))
+    val gridPartitioner = VGridPartitioner(rowBlocks, colBlocks, rowBlocksPerPart, colBlocksPerPart)
+    val blockMatrix = new VBlockMatrix(rowBlocksPerPart, colBlocksPerPart,
+      sc.parallelize(blocks).partitionBy(gridPartitioner), gridPartitioner)
+    val arrayData = Array.tabulate(rowBlocks)(idx => idx.toDouble)
+    val dVector = VUtils.splitArrIntoDV(sc, arrayData, 1, rowBlocks)
+    val f = (blockCoordinate: (Int, Int), block: SparseMatrix, v: Vector) => {
+      (block(0, 0), block(0, 1), v(0))
     }
-    val res0 = blockMatrix.verticalZipVec(dvec)(f)
+    val res0 = blockMatrix.verticalZipVector(dVector)(f)
       .map(x => (x._1._2, x._2))
     val res = res0.map { v =>
       (v._1, v._2._1.toInt, v._2._2.toInt, v._2._3.toInt)
@@ -103,55 +103,55 @@ class VBlockMatrixSuite extends SparkFunSuite with MLlibTestSparkContext {
     })
   }
 
-  test("blockMatrixHorzZipVec") {
-    testBlockMatrixHorzZipVecFunc(5, 4, 2, 3, false)
-    testBlockMatrixHorzZipVecFunc(8, 6, 2, 3, false)
-    testBlockMatrixHorzZipVecFunc(3, 5, 3, 5, false)
-    testBlockMatrixHorzZipVecFunc(15, 4, 6, 1, false)
-    testBlockMatrixHorzZipVecFunc(15, 3, 6, 2, false)
+  test("horizontalZipVector") {
+    testHorizontalZipVector(5, 4, 2, 3, false)
+    testHorizontalZipVector(8, 6, 2, 3, false)
+    testHorizontalZipVector(3, 5, 3, 5, false)
+    testHorizontalZipVector(15, 4, 6, 1, false)
+    testHorizontalZipVector(15, 3, 6, 2, false)
 
-    testBlockMatrixHorzZipVecFunc(4, 5, 3, 2, false)
-    testBlockMatrixHorzZipVecFunc(6, 8, 3, 2, false)
-    testBlockMatrixHorzZipVecFunc(5, 3, 5, 3, false)
-    testBlockMatrixHorzZipVecFunc(4, 15, 1, 6, false)
-    testBlockMatrixHorzZipVecFunc(3, 15, 2, 6, false)
+    testHorizontalZipVector(4, 5, 3, 2, false)
+    testHorizontalZipVector(6, 8, 3, 2, false)
+    testHorizontalZipVector(5, 3, 5, 3, false)
+    testHorizontalZipVector(4, 15, 1, 6, false)
+    testHorizontalZipVector(3, 15, 2, 6, false)
 
-    testBlockMatrixHorzZipVecFunc(5, 4, 2, 3, true)
-    testBlockMatrixHorzZipVecFunc(8, 6, 2, 3, true)
-    testBlockMatrixHorzZipVecFunc(3, 5, 3, 5, true)
-    testBlockMatrixHorzZipVecFunc(15, 4, 6, 1, true)
-    testBlockMatrixHorzZipVecFunc(15, 3, 6, 2, true)
+    testHorizontalZipVector(5, 4, 2, 3, true)
+    testHorizontalZipVector(8, 6, 2, 3, true)
+    testHorizontalZipVector(3, 5, 3, 5, true)
+    testHorizontalZipVector(15, 4, 6, 1, true)
+    testHorizontalZipVector(15, 3, 6, 2, true)
 
-    testBlockMatrixHorzZipVecFunc(4, 5, 3, 2, true)
-    testBlockMatrixHorzZipVecFunc(6, 8, 3, 2, true)
-    testBlockMatrixHorzZipVecFunc(5, 3, 5, 3, true)
-    testBlockMatrixHorzZipVecFunc(4, 15, 1, 6, true)
-    testBlockMatrixHorzZipVecFunc(3, 15, 2, 6, true)
+    testHorizontalZipVector(4, 5, 3, 2, true)
+    testHorizontalZipVector(6, 8, 3, 2, true)
+    testHorizontalZipVector(5, 3, 5, 3, true)
+    testHorizontalZipVector(4, 15, 1, 6, true)
+    testHorizontalZipVector(3, 15, 2, 6, true)
   }
 
-  test("blockMatrixVertZipVec") {
-    testBlockMatrixVertZipVecFunc(5, 4, 2, 3, false)
-    testBlockMatrixVertZipVecFunc(8, 6, 2, 3, false)
-    testBlockMatrixVertZipVecFunc(3, 5, 3, 5, false)
-    testBlockMatrixVertZipVecFunc(15, 4, 6, 1, false)
-    testBlockMatrixVertZipVecFunc(15, 3, 6, 2, false)
+  test("verticalZipVector") {
+    testVerticalZipVector(5, 4, 2, 3, false)
+    testVerticalZipVector(8, 6, 2, 3, false)
+    testVerticalZipVector(3, 5, 3, 5, false)
+    testVerticalZipVector(15, 4, 6, 1, false)
+    testVerticalZipVector(15, 3, 6, 2, false)
 
-    testBlockMatrixVertZipVecFunc(4, 5, 3, 2, false)
-    testBlockMatrixVertZipVecFunc(6, 8, 3, 2, false)
-    testBlockMatrixVertZipVecFunc(5, 3, 5, 3, false)
-    testBlockMatrixVertZipVecFunc(4, 15, 1, 6, false)
-    testBlockMatrixVertZipVecFunc(3, 15, 2, 6, false)
+    testVerticalZipVector(4, 5, 3, 2, false)
+    testVerticalZipVector(6, 8, 3, 2, false)
+    testVerticalZipVector(5, 3, 5, 3, false)
+    testVerticalZipVector(4, 15, 1, 6, false)
+    testVerticalZipVector(3, 15, 2, 6, false)
 
-    testBlockMatrixVertZipVecFunc(5, 4, 2, 3, true)
-    testBlockMatrixVertZipVecFunc(8, 6, 2, 3, true)
-    testBlockMatrixVertZipVecFunc(3, 5, 3, 5, true)
-    testBlockMatrixVertZipVecFunc(15, 4, 6, 1, true)
-    testBlockMatrixVertZipVecFunc(15, 3, 6, 2, true)
+    testVerticalZipVector(5, 4, 2, 3, true)
+    testVerticalZipVector(8, 6, 2, 3, true)
+    testVerticalZipVector(3, 5, 3, 5, true)
+    testVerticalZipVector(15, 4, 6, 1, true)
+    testVerticalZipVector(15, 3, 6, 2, true)
 
-    testBlockMatrixVertZipVecFunc(4, 5, 3, 2, true)
-    testBlockMatrixVertZipVecFunc(6, 8, 3, 2, true)
-    testBlockMatrixVertZipVecFunc(5, 3, 5, 3, true)
-    testBlockMatrixVertZipVecFunc(4, 15, 1, 6, true)
-    testBlockMatrixVertZipVecFunc(3, 15, 2, 6, true)
+    testVerticalZipVector(4, 5, 3, 2, true)
+    testVerticalZipVector(6, 8, 3, 2, true)
+    testVerticalZipVector(5, 3, 5, 3, true)
+    testVerticalZipVector(4, 15, 1, 6, true)
+    testVerticalZipVector(3, 15, 2, 6, true)
   }
 }

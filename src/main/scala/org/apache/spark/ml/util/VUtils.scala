@@ -34,7 +34,7 @@ import scala.reflect.ClassTag
 
 private[ml] object VUtils {
 
-  def kvRDDToDV(
+  def KVRDDToDV(
       rdd: RDD[(Int, Vector)],
       sizePerPart: Int,
       nParts: Int,
@@ -65,7 +65,7 @@ private[ml] object VUtils {
       i += 1
     }
     val rdd = sc.parallelize(splitArr.zipWithIndex.map(x => (x._2, Vectors.dense(x._1))), numPartitions)
-    kvRDDToDV(rdd, sizePerPart, numPartitions, arr.length)
+    KVRDDToDV(rdd, sizePerPart, numPartitions, arr.length)
   }
 
   def splitSparseVector(sv: SparseVector, colsPerBlock: Int): Array[SparseVector] = {
@@ -150,17 +150,17 @@ private[ml] object VUtils {
     }
   }
 
-  def vertcatSparseVectorIntoMatrix(vecs: Array[SparseVector]): SparseMatrix = {
-    val numCols = vecs(0).size
-    val numRows = vecs.length
+  def vertcatSparseVectorIntoMatrix(values: Array[SparseVector]): SparseMatrix = {
+    val numCols = values(0).size
+    val numRows = values.length
     var i = 0
     val entries = new ArrayBuffer[(Int, Int, Double)]()
 
     if (numRows < numCols) {
       // generating sparse matrix with CSR format
-      while (i < vecs.length) {
+      while (i < values.length) {
         val rowIdx = i
-        vecs(i).foreachActive { case (colIdx: Int, v: Double) =>
+        values(i).foreachActive { case (colIdx: Int, v: Double) =>
           entries.append((colIdx, rowIdx, v))
         }
         i = i + 1
@@ -168,9 +168,9 @@ private[ml] object VUtils {
       SparseMatrix.fromCOO(numCols, numRows, entries).transpose
     } else {
       // generating sparse matrix with CSC format
-      while (i < vecs.length) {
+      while (i < values.length) {
         val rowIdx = i
-        vecs(i).foreachActive { case (colIdx: Int, v: Double) =>
+        values(i).foreachActive { case (colIdx: Int, v: Double) =>
           entries.append((rowIdx, colIdx, v))
         }
         i = i + 1
