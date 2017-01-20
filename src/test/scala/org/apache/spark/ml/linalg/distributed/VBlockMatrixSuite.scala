@@ -36,34 +36,34 @@ class VBlockMatrixSuite extends SparkFunSuite with MLlibTestSparkContext {
       colBlocksPerPart: Int,
       shuffleRdd2: Boolean) = {
     val blocks = Array.tabulate(rowBlocks * colBlocks) { idx =>
-      val rowIdx = idx % rowBlocks
-      val colIdx = idx / rowBlocks
-      ((rowIdx, colIdx),
-        SparseMatrix.fromCOO(1, 2, Array((0, 0, rowIdx.toDouble), (0, 1, colIdx.toDouble)))
-        )
+      val rowBlockIdx = idx % rowBlocks
+      val colBlockIdx = idx / rowBlocks
+      ((rowBlockIdx, colBlockIdx),
+        SparseMatrix.fromCOO(1, 2, Array((0, 0, rowBlockIdx.toDouble), (0, 1, colBlockIdx.toDouble))))
     }
     val gridPartitioner = VGridPartitioner(rowBlocks, colBlocks, rowBlocksPerPart, colBlocksPerPart)
-    val blockMatrix = new VBlockMatrix(rowBlocksPerPart, colBlocksPerPart,
-      sc.parallelize(blocks).partitionBy(gridPartitioner), gridPartitioner)
+    val blockMatrix = new VBlockMatrix(
+      1, 2, sc.parallelize(blocks).partitionBy(gridPartitioner), gridPartitioner)
     val arrayData = Array.tabulate(colBlocks)(idx => idx.toDouble)
     val dVector = splitArrIntoDV(sc, arrayData, 1, colBlocks)
     val f = (blockCoordinate: (Int, Int), block: SparseMatrix, v: Vector) => {
+      // This is the triple used to be checked below.
+      // (rowBlockIdx, colBlockIdx, partVectorIdx)
       (block(0, 0), block(0, 1), v(0))
     }
-    val res0 = blockMatrix.horizontalZipVector(dVector)(f)
-      .map(x => (x._1._1, x._2))
-    val res = res0.map { v =>
-      (v._1, v._2._1.toInt, v._2._2.toInt, v._2._3.toInt)
+    val res = blockMatrix.horizontalZipVector(dVector)(f).map {
+      case (blockCoordinate: (Int, Int), triple: (Double, Double, Double)) =>
+        (blockCoordinate._1, triple._1.toInt, triple._2.toInt, triple._3.toInt)
     }.collect().map { v =>
       assert(v._1 == v._2 && v._3 == v._4)
       (v._2, v._3)
-    }.sortBy(v => v._1 + v._2 * 1000)
+    }.toSet
 
     assert(res === Array.tabulate(rowBlocks * colBlocks) { idx =>
       val rowIdx = idx % rowBlocks
       val colIdx = idx / rowBlocks
       (rowIdx, colIdx)
-    })
+    }.toSet)
   }
 
   def testVerticalZipVector(
@@ -73,34 +73,32 @@ class VBlockMatrixSuite extends SparkFunSuite with MLlibTestSparkContext {
       colBlocksPerPart: Int,
       shuffleRdd2: Boolean) = {
     val blocks = Array.tabulate(rowBlocks * colBlocks) { idx =>
-      val rowIdx = idx % rowBlocks
-      val colIdx = idx / rowBlocks
-      ((rowIdx, colIdx),
-        SparseMatrix.fromCOO(1, 2, Array((0, 0, rowIdx.toDouble), (0, 1, colIdx.toDouble)))
-        )
+      val rowBlockIdx = idx % rowBlocks
+      val colBlockIdx = idx / rowBlocks
+      ((rowBlockIdx, colBlockIdx),
+        SparseMatrix.fromCOO(1, 2, Array((0, 0, rowBlockIdx.toDouble), (0, 1, colBlockIdx.toDouble))))
     }
     val gridPartitioner = VGridPartitioner(rowBlocks, colBlocks, rowBlocksPerPart, colBlocksPerPart)
-    val blockMatrix = new VBlockMatrix(rowBlocksPerPart, colBlocksPerPart,
-      sc.parallelize(blocks).partitionBy(gridPartitioner), gridPartitioner)
+    val blockMatrix = new VBlockMatrix(
+      1, 2, sc.parallelize(blocks).partitionBy(gridPartitioner), gridPartitioner)
     val arrayData = Array.tabulate(rowBlocks)(idx => idx.toDouble)
     val dVector = VUtils.splitArrIntoDV(sc, arrayData, 1, rowBlocks)
     val f = (blockCoordinate: (Int, Int), block: SparseMatrix, v: Vector) => {
       (block(0, 0), block(0, 1), v(0))
     }
-    val res0 = blockMatrix.verticalZipVector(dVector)(f)
-      .map(x => (x._1._2, x._2))
-    val res = res0.map { v =>
-      (v._1, v._2._1.toInt, v._2._2.toInt, v._2._3.toInt)
+    val res = blockMatrix.verticalZipVector(dVector)(f).map {
+      case (blockCoordinate: (Int, Int), triple: (Double, Double, Double)) =>
+        (blockCoordinate._2, triple._1.toInt, triple._2.toInt, triple._3.toInt)
     }.collect().map { v =>
       assert(v._1 == v._3 && v._2 == v._4)
       (v._2, v._3)
-    }.sortBy(v => v._1 + v._2 * 1000)
+    }.toSet
 
     assert(res === Array.tabulate(rowBlocks * colBlocks) { idx =>
       val rowIdx = idx % rowBlocks
       val colIdx = idx / rowBlocks
       (rowIdx, colIdx)
-    })
+    }.toSet)
   }
 
   test("horizontalZipVector") {
