@@ -39,13 +39,15 @@ import org.apache.spark.mllib.linalg.{Vector, Vectors}
  */
 @Since("1.1.0")
 @DeveloperApi
-class OptimMultivariateOnlineSummarizer(mask: Int)
+class OptimMultivariateOnlineSummarizer(val mask: Int)
   extends MultivariateStatisticalSummary with Serializable {
 
   import OptimMultivariateOnlineSummarizer._
+
   def this() = {
     this(OptimMultivariateOnlineSummarizer.allMask)
   }
+
   private def testMask(m: Int): Boolean = (mask & m) != 0
 
   private var n = 0

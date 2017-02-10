@@ -81,13 +81,13 @@ class MapJoinPartitionsRDDV2[A: ClassTag, B: ClassTag, V: ClassTag](
   override def compute(split: Partition, context: TaskContext): Iterator[V] = {
     val currSplit = split.asInstanceOf[MapJoinPartitionsPartitionV2]
     val rdd2Dep = dependencies(1).asInstanceOf[ShuffleDependency[Int, Any, Any]]
-    f(currSplit.s1.index, rdd1.iterator(currSplit.s1, context),
-      currSplit.s2Arr.map(s2 => (s2.index,
-        SparkEnv.get.shuffleManager
-          .getReader[Int, B](rdd2Dep.shuffleHandle, s2.index, s2.index + 1, context)
-          .read().map(x => x._2)
-        ))
-    )
+    val rdd2PartIter = currSplit.s2Arr.map(s2 => (s2.index,
+      SparkEnv.get.shuffleManager
+        .getReader[Int, B](rdd2Dep.shuffleHandle, s2.index, s2.index + 1, context)
+        .read().map(x => x._2)
+      ))
+    val rdd1Iter = rdd1.iterator(currSplit.s1, context)
+    f(currSplit.s1.index, rdd1Iter, rdd2PartIter)
   }
 
   override def clearDependencies() {

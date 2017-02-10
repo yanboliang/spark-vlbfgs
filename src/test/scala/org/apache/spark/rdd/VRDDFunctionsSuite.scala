@@ -17,7 +17,9 @@
 
 package org.apache.spark.rdd
 
-import org.apache.spark.SparkFunSuite
+import scala.collection.mutable
+
+import org.apache.spark.{HashPartitioner, SparkFunSuite}
 import org.apache.spark.ml.linalg.distributed.{DistributedVectorPartitioner, VGridPartitioner}
 import org.apache.spark.mllib.util.MLlibTestSparkContext
 
@@ -86,5 +88,23 @@ class VRDDFunctionsSuite extends SparkFunSuite with MLlibTestSparkContext {
     }
     assert(zipped.glom().map(_.toList).collect().toList ===
       List(List(213, 216), List(219, 222)))
+  }
+
+  test("aggregateByKeyInMemory") {
+    val rdd: RDD[(Int, Int)] = sc.makeRDD(Array(
+      (1, 1), (2, 2), (3, 3),
+      (1, 10), (2, 20), (3, 30)
+    ), 3)
+    import org.apache.spark.rdd.VPairRDDFunctions._
+    val res = rdd.aggregateByKeyInMemory(new mutable.HashSet[Int], new HashPartitioner(3))(
+      (u, v) => u += v,
+      (u1, u2) => u1 ++= u2
+    ).mapValues(_.toSet).collect()
+
+    assert(res.sortBy(_._1) === Array(
+      (1, Set(1, 10)),
+      (2, Set(2, 20)),
+      (3, Set(3, 30))
+    ))
   }
 }
