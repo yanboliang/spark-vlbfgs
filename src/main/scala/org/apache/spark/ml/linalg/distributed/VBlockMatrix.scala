@@ -17,8 +17,8 @@
 
 package org.apache.spark.ml.linalg.distributed
 
-import org.apache.spark.ml.linalg.{SparseMatrix, Vector}
-import org.apache.spark.rdd.{PartitionCoalescer, RDD}
+import org.apache.spark.ml.linalg.{VMatrix, Vector}
+import org.apache.spark.rdd.RDD
 
 import scala.collection.mutable.HashMap
 import org.apache.spark.Partitioner
@@ -29,14 +29,14 @@ import scala.reflect.ClassTag
 class VBlockMatrix(
     val rowsPerBlock: Int,
     val colsPerBlock: Int,
-    val blocks: RDD[((Int, Int), SparseMatrix)],
+    val blocks: RDD[((Int, Int), VMatrix)],
     val gridPartitioner: VGridPartitioner) {
 
   final val mapJoinPartitionsShuffleRdd2 =
     System.getProperty("vflbfgs.mapJoinPartitions.shuffleRdd2", "true").toBoolean
 
   def horizontalZipVector[T: ClassTag](vector: DistributedVector)(
-      f: (((Int, Int), SparseMatrix, Vector) => T)
+      f: (((Int, Int), VMatrix, Vector) => T)
     ): RDD[((Int, Int), T)] = {
 
     import org.apache.spark.rdd.VRDDFunctions._
@@ -53,15 +53,15 @@ class VBlockMatrix(
         (startIdx until endIdx).toArray // The corresponding partition ID of `vector`
       },
       (pid: Int,
-       mIter: Iterator[((Int, Int), SparseMatrix)],
+       mIter: Iterator[((Int, Int), VMatrix)],
        vIter: Array[(Int, Iterator[Vector])]) => {
         val vMap = new HashMap[Int, Vector]
-        vIter.foreach { case (colId: Int, iter: Iterator[Vector]) =>
+        util.Random.shuffle(vIter.toList).foreach { case (colId: Int, iter: Iterator[Vector]) =>
             val v = iter.next()
             assert(!iter.hasNext)
             vMap += (colId -> v)
         }
-        mIter.map { case ((rowBlockIdx: Int, colBlockIdx: Int), sm: SparseMatrix) =>
+        mIter.map { case ((rowBlockIdx: Int, colBlockIdx: Int), sm: VMatrix) =>
           val partVector = vMap(colBlockIdx)
           ((rowBlockIdx, colBlockIdx), f((rowBlockIdx, colBlockIdx), sm, partVector))
         }
@@ -70,7 +70,7 @@ class VBlockMatrix(
   }
 
   def verticalZipVector[T: ClassTag](vec: DistributedVector)(
-      f: (((Int, Int), SparseMatrix, Vector) => T)
+      f: (((Int, Int), VMatrix, Vector) => T)
     ): RDD[((Int, Int), T)] = {
 
     import org.apache.spark.rdd.VRDDFunctions._
@@ -85,16 +85,16 @@ class VBlockMatrix(
         if (endIdx > gridPartitionerParam.rowBlocks) endIdx = gridPartitionerParam.rowBlocks
         (startIdx until endIdx).toArray
       },
-      (pid: Int, mIter: Iterator[((Int, Int), SparseMatrix)],
+      (pid: Int, mIter: Iterator[((Int, Int), VMatrix)],
        vIter: Array[(Int, Iterator[Vector])]) => {
         val vMap = new HashMap[Int, Vector]
-        vIter.foreach {
+        util.Random.shuffle(vIter.toList).foreach {
           case (rowId: Int, iter: Iterator[Vector]) =>
             val v = iter.next()
             assert(!iter.hasNext)
             vMap += (rowId -> v)
         }
-        mIter.map { case ((rowBlockIdx: Int, colBlockIdx: Int), sm: SparseMatrix) =>
+        mIter.map { case ((rowBlockIdx: Int, colBlockIdx: Int), sm: VMatrix) =>
           val partVector = vMap(rowBlockIdx)
           ((rowBlockIdx, colBlockIdx), f((rowBlockIdx, colBlockIdx), sm, partVector))
         }
@@ -103,14 +103,14 @@ class VBlockMatrix(
   }
 
   def horizontalZipVector2(vector: DistributedVector)(
-    f: (((Int, Int), SparseMatrix, Vector) => SparseMatrix)
+    f: (((Int, Int), VMatrix, Vector) => VMatrix)
   ): VBlockMatrix = {
     val newBlocks = horizontalZipVector(vector)(f)
     new VBlockMatrix(rowsPerBlock, colsPerBlock, newBlocks, gridPartitioner)
   }
 
   def verticalZipVector2(vector: DistributedVector)(
-    f: (((Int, Int), SparseMatrix, Vector) => SparseMatrix)
+    f: (((Int, Int), VMatrix, Vector) => VMatrix)
   ): VBlockMatrix = {
     val newBlocks = verticalZipVector(vector)(f)
     new VBlockMatrix(rowsPerBlock, colsPerBlock, newBlocks, gridPartitioner)

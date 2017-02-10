@@ -20,7 +20,7 @@ package org.apache.spark.ml.classification
 import scala.collection.mutable.ArrayBuffer
 import org.apache.spark.internal.Logging
 import org.apache.spark.ml.feature.Instance
-import org.apache.spark.ml.linalg.{BLAS, DenseVector, SparseMatrix, SparseVector, Vector, Vectors}
+import org.apache.spark.ml.linalg._
 import org.apache.spark.ml.linalg.distributed._
 import org.apache.spark.ml.optim.{VDiffFunction, VLBFGS, VOWLQN}
 import org.apache.spark.ml.param.{BooleanParam, IntParam, ParamMap, ParamValidators}
@@ -102,6 +102,14 @@ private[classification] trait VLogisticRegressionParams
 
   def getRowPartitionSplitNumOnGeneratingFeatureMatrix: Int =
     $(rowPartitionSplitNumOnGeneratingFeatureMatrix)
+
+  val compressFeatureMatrix: BooleanParam = new BooleanParam(this,
+    "compressFeatureMatrix",
+    "compress feature matrix."
+  )
+  setDefault(compressFeatureMatrix -> false)
+
+  def getCompressFeatureMatrix: Boolean = $(compressFeatureMatrix)
 }
 
 /**
@@ -241,6 +249,9 @@ class VLogisticRegression(override val uid: String)
   def setRowPartitionSplitNumOnGeneratingFeatureMatrix(numSplits: Int): this.type =
     set(rowPartitionSplitNumOnGeneratingFeatureMatrix, numSplits)
 
+  def setCompressFeatureMatrix(value: Boolean): this.type =
+    set(compressFeatureMatrix, value)
+
   override protected[spark] def train(dataset: Dataset[_]): VLogisticRegressionModel = {
     logInfo("Start to train VLogisticRegressionModel.")
 
@@ -327,7 +338,8 @@ class VLogisticRegression(override val uid: String)
     val lastBlockColSize = (numFeatures - (colBlocks - 1) * colsPerBlockParam).toInt
     val lastBlockRowSize = (numInstances - (rowBlocks - 1) * rowsPerBlockParam).toInt
 
-    var rawFeatureBlocks: RDD[((Int, Int), SparseMatrix)] =
+    val compressFeatureMatrixParam = $(compressFeatureMatrix)
+    var rawFeatureBlocks: RDD[((Int, Int), VMatrix)] =
       VUtils.zipRDDWithIndex(partitionSizes, instances)
         .mapPartitions { iter: Iterator[(Long, Instance)] =>
           new Iterator[Array[((Int, Int), (Array[Int], Array[Int], Array[Double]))]] {
@@ -381,7 +393,7 @@ class VLogisticRegression(override val uid: String)
           }
           val numRows = if (coodinate._1 == rowBlocks - 1) lastBlockRowSize else rowsPerBlockParam
           val numCols = if (coodinate._2 == colBlocks - 1) lastBlockColSize else colsPerBlockParam
-          (coodinate, SparseMatrix.fromCOO(numRows, numCols, cooBuff))
+          (coodinate, VMatrices.COO(numRows, numCols, cooBuff, compressFeatureMatrixParam))
         }
     if ($(rowPartitionSplitNumOnGeneratingFeatureMatrix) > 1) {
       rawFeatureBlocks = rawFeatureBlocks.partitionBy(gridPartitioner)
@@ -389,7 +401,7 @@ class VLogisticRegression(override val uid: String)
 
     val rawFeatures: VBlockMatrix = new VBlockMatrix(
       rowsPerBlockParam, colsPerBlockParam, rawFeatureBlocks, gridPartitioner)
-      .persist(StorageLevel.MEMORY_AND_DISK)
+      .persist(StorageLevel.MEMORY_AND_DISK_SER)
 
     // force trigger raw features block matrix persist. So that it avoid spark pipeline the
     // group reducer and the following mapJoinPartitions mapper together, because the two
@@ -404,7 +416,7 @@ class VLogisticRegression(override val uid: String)
       rowsPerBlockParam, rowBlocks, numInstances)
 
     val summarizerSeqOp = (summarizer: OptimMultivariateOnlineSummarizer,
-                           tuple: (SparseMatrix, Vector)) => {
+                           tuple: (VMatrix, Vector)) => {
       val (block, weight) = tuple
       block.rowIter.zip(weight.toArray.toIterator).foreach {
         case (rowVector: Vector, weight: Double) =>
@@ -416,8 +428,8 @@ class VLogisticRegression(override val uid: String)
                                s2: OptimMultivariateOnlineSummarizer) => s1.merge(s2)
 
     val featureStdSummarizerRDD = rawFeatures.verticalZipVector(weightDV) {
-      (blockCoordinate: (Int, Int), block: SparseMatrix, weight: Vector) => (block, weight)
-    }.map { case ((rowBlockIdx: Int, colBlockIdx: Int), tuple: (SparseMatrix, Vector)) =>
+      (blockCoordinate: (Int, Int), block: VMatrix, weight: Vector) => (block, weight)
+    }.map { case ((rowBlockIdx: Int, colBlockIdx: Int), tuple: (VMatrix, Vector)) =>
       (colBlockIdx, tuple)
     }.aggregateByKey(
       new OptimMultivariateOnlineSummarizer(
@@ -435,16 +447,16 @@ class VLogisticRegression(override val uid: String)
     logInfo("feature std generated.")
 
     val features: VBlockMatrix = rawFeatures.horizontalZipVector2(featuresStd) {
-      (blockCoordinate: (Int, Int), block: SparseMatrix, partFeaturesStd: Vector) =>
+      (blockCoordinate: (Int, Int), block: VMatrix, partFeaturesStd: Vector) =>
         val partFeatureStdArr = partFeaturesStd.asInstanceOf[DenseVector].values
         val arrBuf = new ArrayBuffer[(Int, Int, Double)]()
         block.foreachActive { case (i: Int, j: Int, value: Double) =>
           if (partFeatureStdArr(j) != 0 && value != 0) {
-            arrBuf.append((j, i, value / partFeatureStdArr(j)))
+            arrBuf.append((i, j, value / partFeatureStdArr(j)))
           }
         }
-        SparseMatrix.fromCOO(block.numCols, block.numRows, arrBuf).transpose
-    }.persist(StorageLevel.MEMORY_AND_DISK)
+        VMatrices.COO(block.numRows, block.numCols, arrBuf, compressFeatureMatrixParam)
+    }.persist(StorageLevel.MEMORY_AND_DISK_SER)
 
     features.blocks.count() // force trigger persist
     rawFeatureBlocks.unpersist()
@@ -555,6 +567,7 @@ class VLogisticRegression(override val uid: String)
       state = states.next()
       val endTime = System.currentTimeMillis()
       logInfo(s"VLogisticRegression iteration ${state.iter} finished, spends ${endTime - startTime} ms.")
+      logInfo(s"new X sparsity = ${state.x.values.map(_.numNonzeros).sum() / state.x.size}")
     }
     if (state == null) {
       val msg = s"${optimizer.getClass.getName} failed."
@@ -642,7 +655,7 @@ private[ml] class VBinomialLogisticCostFun(
     assert(RDDUtils.isRDDPersisted(labelAndWeight))
 
     val multiplierRDD: RDD[Vector] = features.horizontalZipVector(coefficients) {
-      (blockCoordinate: (Int, Int), block: SparseMatrix, partCoefficients: Vector) =>
+      (blockCoordinate: (Int, Int), block: VMatrix, partCoefficients: Vector) =>
         val intercept = if (fitIntercept && blockCoordinate._2 == colBlocks - 1) {
           // Get intercept from the last element of coefficients vector
           partCoefficients(partCoefficients.size - 1)
@@ -691,7 +704,7 @@ private[ml] class VBinomialLogisticCostFun(
     val lossSum = lossAccu.value / weightSum
 
     val gradientRDD: RDD[Vector] = features.verticalZipVector(multiplier) {
-      (blockCoordinate: (Int, Int), block: SparseMatrix, partMultipliers: Vector) =>
+      (blockCoordinate: (Int, Int), block: VMatrix, partMultipliers: Vector) =>
         val partGradArr = if (fitIntercept && blockCoordinate._2 == colBlocks - 1) {
           val arr = Array.fill[Double](block.numCols + 1)(0.0)
           arr(arr.length - 1) = partMultipliers.toArray.sum

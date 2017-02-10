@@ -210,7 +210,7 @@ class DistributedVector(
     var oldBlocks: RDD[Vector] = null
     if (isRDDAlreadyComputed) {
       val checkpointValues = values.map(x => x)
-      checkpointValues.persist().checkpoint()
+      checkpointValues.persist(StorageLevel.MEMORY_AND_DISK).checkpoint()
       oldBlocks = values
       values = checkpointValues
     } else {
