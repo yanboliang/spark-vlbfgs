@@ -89,7 +89,7 @@ class DistributedVector(
 
   /**
    * Returns the L^2-norm of this vector.
-   */
+    **/
   def norm(): Double = {
     math.sqrt(values.map(Vectors.norm(_, 2)).map(x => x * x).sum())
   }
@@ -188,41 +188,45 @@ class DistributedVector(
         }, sizePerPart, numPartitions, size)
   }
 
-  def toLocal: Vector = {
+  // transform into local sparse vector, optimized to save memory in best.
+  def toLocalSparse: Vector = {
     require(size < Int.MaxValue)
-    val indicesBuffer = new ArrayBuffer[Int]
-    val valuesBuffer = new ArrayBuffer[Double]
-    values.zipWithIndex.collect.sortWith(_._2 < _._2).foreach { case (v: Vector, index: Long) =>
-      val sv = v.toSparse
-      indicesBuffer ++= sv.indices.map(_ + index.toInt * sizePerPart)
-      valuesBuffer ++= sv.values
+    val numNonzeros = values.map(_.numNonzeros).sum().toInt
+    val vecIndices = new Array[Int](numNonzeros)
+    val vecValues = new Array[Double](numNonzeros)
+
+    var pos = 0
+    values.toLocalIterator.zipWithIndex.foreach { case (vec: Vector, pid: Int) =>
+      vec.foreachActive { case (index: Int, value: Double) =>
+        if (value != 0.0) {
+          vecIndices(pos) = index + pid * sizePerPart
+          vecValues(pos) = value
+          pos += 1
+        }
+      }
     }
-    Vectors.sparse(size.toInt, indicesBuffer.toArray, valuesBuffer.toArray).compressed
+    Vectors.sparse(size.toInt, vecIndices, vecValues)
+  }
+
+  def toLocal: Vector = {
+    toLocalSparse.compressed
   }
 
   def isPersisted: Boolean = {
     RDDUtils.isRDDPersisted(values)
   }
 
-  def checkpoint(isRDDAlreadyComputed: Boolean, eager: Boolean): RDD[Vector] = {
-    assert(isPersisted)
-    logInfo(s"checkpoint distributed vector ${values.id}")
-    var oldBlocks: RDD[Vector] = null
-    if (isRDDAlreadyComputed) {
-      val checkpointValues = values.map(x => x)
-      checkpointValues.persist(StorageLevel.MEMORY_AND_DISK).checkpoint()
-      oldBlocks = values
-      values = checkpointValues
-    } else {
+  def checkpoint(): DistributedVector = {
+    if (values.sparkContext.checkpointDir.isDefined) {
+      logInfo(s"checkpoint distributed vector ${values.id}")
       values.checkpoint()
+    } else {
+      logWarning(s"checkpointDir not set, checkpoint failed.")
     }
-    if (eager) {
-      values.count() // eager checkpoint
-    }
-    // return old blocks (only when `isRDDAlreadyComputed`),
-    // so that caller can unpersist the old RDD later.
-    oldBlocks
+    this
   }
+
+  def isCheckpointed: Boolean = values.isCheckpointed
 
   def deleteCheckpoint(): Unit = {
     try {

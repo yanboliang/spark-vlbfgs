@@ -70,7 +70,7 @@ object RosenbrockExample {
 
     var dfcallCnt = 0
     val vf_df = new VDiffFunction(eagerPersist) {
-      def calculate(x: DistributedVector) = {
+      def calculate(x: DistributedVector, checkAndMarkCheckpoint: DistributedVector => Unit) = {
         dfcallCnt += 1
         val r = calc(new BDV(x.toLocal.toArray))
         val rr = r._2.toArray

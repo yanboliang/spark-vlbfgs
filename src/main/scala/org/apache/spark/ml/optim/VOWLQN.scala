@@ -43,22 +43,27 @@ class VOWLQN (
     l1RegValue: (Double, Boolean),
     l1RegDV: DistributedVector,
     tolerance: Double,
-    eagerPersist: Boolean) extends VLBFGS(maxIter, m, tolerance, eagerPersist) { optimizer =>
+    checkpointInterval: Int,
+    eagerPersist: Boolean) extends VLBFGS(maxIter, m, tolerance, checkpointInterval, eagerPersist) {
 
-  def this(maxIter: Int, m: Int, l1Reg: DistributedVector, tolerance: Double, eagerPersist: Boolean) = {
-    this(maxIter, m, null, l1Reg, tolerance, eagerPersist = eagerPersist)
+    VOWLQNOptimizer =>
+
+  def this(maxIter: Int, m: Int, l1Reg: DistributedVector, tolerance: Double,
+           checkpointInterval: Int, eagerPersist: Boolean) = {
+    this(maxIter, m, null, l1Reg, tolerance, checkpointInterval, eagerPersist = eagerPersist)
   }
 
-  def this(maxIter: Int, m: Int, l1RegValue: (Double, Boolean), tolerance: Double, eagerPersist: Boolean) = {
-    this(maxIter, m, l1RegValue, null, tolerance, eagerPersist = eagerPersist)
+  def this(maxIter: Int, m: Int, l1RegValue: (Double, Boolean), tolerance: Double,
+           checkpointInterval: Int, eagerPersist: Boolean) = {
+    this(maxIter, m, l1RegValue, null, tolerance, checkpointInterval, eagerPersist = eagerPersist)
   }
 
-  def this(maxIter: Int, m: Int, l1Reg: DistributedVector) = {
-    this(maxIter, m, null, l1Reg, tolerance = 1e-8, eagerPersist = true)
+  def this(maxIter: Int, m: Int, l1Reg: DistributedVector, checkpointInterval: Int) = {
+    this(maxIter, m, null, l1Reg, tolerance = 1e-8, checkpointInterval, eagerPersist = true)
   }
 
-  def this(maxIter: Int, m: Int, l1RegValue: (Double, Boolean)) = {
-    this(maxIter, m, l1RegValue, null, tolerance = 1e-8, eagerPersist = true)
+  def this(maxIter: Int, m: Int, l1RegValue: (Double, Boolean), checkpointInterval: Int) = {
+    this(maxIter, m, l1RegValue, null, tolerance = 1e-8, checkpointInterval, eagerPersist = true)
   }
 
   override def chooseDescentDirection(history: this.History, state: this.State): DistributedVector = {
@@ -66,7 +71,7 @@ class VOWLQN (
     // in the same directional (within the same hypercube) as the adjusted gradient for proof.
     // Although this doesn't seem to affect the outcome that much in most of cases, there are some cases
     // where the algorithm won't converge (confirmed with the author, Galen Andrew).
-    val direction = history.computeDirection(state.x, state.grad, state.adjustedGradient)
+    val direction = history.computeDirection(state)
     val correctedDir = direction.zipPartitions(state.adjustedGradient) {
       case (partDir: Vector, partAdjustedGrad: Vector) =>
         val res = new Array[Double](partDir.size)
@@ -103,11 +108,13 @@ class VOWLQN (
         }
         Vectors.dense(res)
     }
+    state.checkAndMarkCheckpoint(newX)
     newX.persist(StorageLevel.MEMORY_AND_DISK, eager = eagerPersist)
   }
 
   // Adds in the regularization stuff to the gradient(pseudo-gradient)
   override protected def adjust(
+      state: this.State,
       newX: DistributedVector,
       newGrad: DistributedVector,
       newVal: Double): (Double, DistributedVector) = {
@@ -169,6 +176,14 @@ class VOWLQN (
           Vectors.dense(res)
       }
     }
+
+    // state object maybe null (when called in `VLBFGS.initialState`) so here add `!= null` check.
+    // first checkpoint, then eager persist. checkpoint must run first otherwise the checkpoint
+    // won't work.
+    if (state != null) {
+      state.checkAndMarkCheckpoint(adjGrad)
+    }
+
     // Here must use eager persist because we need get the `l1ValueAccu` value immediately
     adjGrad.persist(StorageLevel.MEMORY_AND_DISK, eager = true)
 
@@ -228,15 +243,15 @@ class VOWLQN (
         lastAlpha = alpha
 
         // Note: here must call OWLQN.takeStep
-        lastX = optimizer.takeStep(state, direction, alpha)
+        lastX = VOWLQNOptimizer.takeStep(state, direction, alpha)
 
-        val (fnValue, grad) = outer.calculate(lastX)
+        val (fnValue, grad) = outer.calculate(lastX, state.checkAndMarkCheckpoint)
         assert(grad.isPersisted)
 
         lastGrad = grad
 
         // Note: here must call OWLQN.adjust
-        val (adjValue, adjGrad) = optimizer.adjust(lastX, lastGrad, fnValue)
+        val (adjValue, adjGrad) = VOWLQNOptimizer.adjust(state, lastX, lastGrad, fnValue)
         assert(adjGrad.isPersisted)
 
         lastAdjGrad = adjGrad
@@ -301,11 +316,11 @@ class VOWLQN (
       lineSearchDiffFn.disposeLastResult()
       newX = takeStep(state, direction, alpha)
       assert(newX.isPersisted)
-      val (_newValue, _newGrad) = fn.calculate(newX)
+      val (_newValue, _newGrad) = fn.calculate(newX, state.checkAndMarkCheckpoint)
       newValue = _newValue
       newGrad = _newGrad
       assert(newGrad.isPersisted)
-      val (_newAdjValue, _newAdjGrad) = adjust(newX, newGrad, newValue)
+      val (_newAdjValue, _newAdjGrad) = adjust(state, newX, newGrad, newValue)
       newAdjValue = _newAdjValue
       newAdjGrad = _newAdjGrad
     }

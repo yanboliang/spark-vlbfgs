@@ -521,7 +521,7 @@ class VLogisticRegressionSuite extends SparkFunSuite with MLlibTestSparkContext 
     assert(vmodel.intercept ~== model.intercept relTol 1e-3)
   }
 
-  test("test on testData1WithIntecept, w/ weight, reg = 0.8, elasticNet = 1.0, w/ standardize, w/ intercept") {
+  test("test on testData1WithIntecept, w/ weight, reg = 0.9, elasticNet = 0.1, w/ standardize, w/ intercept") {
 
     val vtrainer = new VLogisticRegression()
       .setFitIntercept(true)
@@ -530,8 +530,8 @@ class VLogisticRegressionSuite extends SparkFunSuite with MLlibTestSparkContext 
       .setColPartitions(3)
       .setRowPartitions(2)
       .setWeightCol("weight")
-      .setRegParam(0.8)
-      .setElasticNetParam(1.0)
+      .setRegParam(0.9)
+      .setElasticNetParam(0.1)
       .setStandardization(true)
       .setEagerPersist(false)
     val vmodel = vtrainer.fit(testData1WithIntecept)
@@ -539,8 +539,8 @@ class VLogisticRegressionSuite extends SparkFunSuite with MLlibTestSparkContext 
     val trainer = new LogisticRegression()
       .setFitIntercept(true)
       .setWeightCol("weight")
-      .setRegParam(0.8)
-      .setElasticNetParam(1.0)
+      .setRegParam(0.9)
+      .setElasticNetParam(0.1)
       .setStandardization(true)
     val model = trainer.fit(testData1WithIntecept)
     logInfo(s"LogisticRegression total iterations: ${model.summary.totalIterations}")

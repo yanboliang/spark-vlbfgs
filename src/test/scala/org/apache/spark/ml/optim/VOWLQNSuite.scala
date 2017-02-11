@@ -43,7 +43,7 @@ class VOWLQNSuite extends SparkFunSuite with MLlibTestSparkContext {
     val rand = new Random(100)
 
     val owlqn = new BreezeOWLQN[Int, BDV[Double]](100, 10, _ => 3.0)
-    val vowqln = new VOWLQN(100, 10, (3.0, false))
+    val vowqln = new VOWLQN(100, 10, (3.0, false), 15)
 
     val initData: Array[Double] = Array.fill(10)(0.0)
       .map(x => rangeRandDouble(-10D, 10D, rand))
@@ -59,9 +59,12 @@ class VOWLQNSuite extends SparkFunSuite with MLlibTestSparkContext {
       }
     }
     val vDiffFun = new VDiffFunction {
-      def calculate(x: DistributedVector) = {
+      def calculate(x: DistributedVector, checkAndMarkCheckpoint: DistributedVector => Unit) = {
         val n = x.add(-3.0).norm
-        (n * n, x.scale(2.0).add(-6.0).persist(StorageLevel.MEMORY_AND_DISK, eager = true))
+        val dv = x.scale(2.0).add(-6.0)
+        if (checkAndMarkCheckpoint != null) { checkAndMarkCheckpoint(dv) }
+        dv.persist(StorageLevel.MEMORY_AND_DISK, eager = true)
+        (n * n, dv)
       }
     }
 
@@ -91,7 +94,7 @@ class VOWLQNSuite extends SparkFunSuite with MLlibTestSparkContext {
     println(s"TEST: m=$m, dimension=$dimension, maxIter=$maxIter, numPartitions=$numPartitions")
 
     val owlqn = new BreezeOWLQN[Int, BDV[Double]](maxIter, m, _ => 3.0)
-    val vowlqn = new VOWLQN(maxIter, m, (3.0, false))
+    val vowlqn = new VOWLQN(maxIter, m, (3.0, false), 15)
 
     val initData: Array[Double] = Array.fill(dimension)(0.0)
       .map(x => rangeRandDouble(-10D, 10D, rand))
@@ -119,15 +122,18 @@ class VOWLQNSuite extends SparkFunSuite with MLlibTestSparkContext {
       def calculate(x: BDV[Double]) = calc(x)
     }
     val vDiffFun = new VDiffFunction {
-      def calculate(x: DistributedVector) = {
+      def calculate(x: DistributedVector, checkAndMarkCheckpoint: DistributedVector => Unit) = {
         val r = calc(new BDV(x.toLocal.toArray))
         val rr = r._2.toArray
-        (r._1, VUtils.splitArrIntoDV(sc, rr, sizePerPart, numPartitions).persist())
+        val dv = VUtils.splitArrIntoDV(sc, rr, sizePerPart, numPartitions)
+        if (checkAndMarkCheckpoint != null) { checkAndMarkCheckpoint(dv) }
+        dv.persist()
+        (r._1, dv)
       }
     }
 
     val owlqnIter = owlqn.iterations(bDiffFun, initBDV)
-    val vowlqnIter = vowlqn.iterations(vDiffFun, initDV, iter => iter % 15 == 0)
+    val vowlqnIter = vowlqn.iterations(vDiffFun, initDV)
 
     var bState: owlqn.State = null
     var vState: vowlqn.State = null
@@ -150,10 +156,10 @@ class VOWLQNSuite extends SparkFunSuite with MLlibTestSparkContext {
     val l1RegDV = VUtils.splitArrIntoDV(sc, l1RegArr, sizePerPart, numPartitions).persist()
     initDV.persist()
     val owlqn2 = new BreezeOWLQN[Int, BDV[Double]](maxIter, m, (k:Int) => l1RegArr(k))
-    val vowlqn2 = new VOWLQN(maxIter, m, l1RegDV)
+    val vowlqn2 = new VOWLQN(maxIter, m, l1RegDV, 15)
 
     val owlqnIter2 = owlqn2.iterations(bDiffFun, initBDV)
-    val vowlqnIter2 = vowlqn2.iterations(vDiffFun, initDV, iter => iter % 15 == 0)
+    val vowlqnIter2 = vowlqn2.iterations(vDiffFun, initDV)
 
     var bState2: owlqn2.State = null
     var vState2: vowlqn2.State = null
