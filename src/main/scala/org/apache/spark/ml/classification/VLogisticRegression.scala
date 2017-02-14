@@ -241,7 +241,7 @@ class VLogisticRegression(override val uid: String)
   setDefault(elasticNetParam -> 0.0)
 
   def setCheckpointInterval(interval: Int): this.type = set(checkpointInterval, interval)
-  setDefault(checkpointInterval, 15)
+  setDefault(checkpointInterval, 30)
 
   def setGeneratingFeatureMatrixBuffer(size: Int): this.type =
     set(generatingFeatureMatrixBuffer, size)
