@@ -20,6 +20,8 @@ package org.apache.spark.ml.example
 import org.apache.spark.ml.classification.VLogisticRegression
 import org.apache.spark.sql.{Dataset, SparkSession}
 
+import scala.collection.mutable.ArrayBuffer
+
 object VLORExample {
 
   def main(args: Array[String]) = {
@@ -39,6 +41,8 @@ object VLORExample {
 
     var dataPath: String = null
     var waitEnterPressingOnExit: Boolean = false
+    var correctionNumber: Int = 10
+    var compressFeatures: Boolean = false
 
     try {
       maxIter = args(0).toInt
@@ -54,12 +58,14 @@ object VLORExample {
       elasticNetParam = args(10).toDouble
       dataPath = args(11)
       waitEnterPressingOnExit = args(12).toBoolean
+      correctionNumber = args(13).toInt
+      compressFeatures = args(14).toBoolean
     } catch {
       case _: Throwable =>
         println("Param list: "
           + "maxIter dimension colsPerBlock rowsPerBlock colPartitions rowPartitions"
           + " regParam fitIntercept generatingFeaturesMatrixBuffer rowPartitionSplitNumOnGeneratingFeatureMatrix"
-          + " elasticNetParam dataPath waitEnterPressingOnExit")
+          + " elasticNetParam dataPath waitEnterPressingOnExit correctionNumber")
         println("parameter description:" +
           "\nmaxIter          max iteration number for VLogisticRegression" +
           "\ndimension        training data dimension number" +
@@ -73,7 +79,9 @@ object VLORExample {
           "\nrowPartitionSplitNumOnGeneratingFeatureMatrix  row partition splits number on generating features matrix" +
           "\nelasticNetParam  elastic net parameter for regulization" +
           "\ndataPath         training data path on HDFS" +
-          "\nwaitEnterPressingOnExit    whether need press enter to exit."
+          "\nwaitEnterPressingOnExit    whether need press enter to exit." +
+          "\ncorrectionNumber       correction number for LBFGS" +
+          "\ncompressFeatures       whether to compress features using float"
         )
 
         System.exit(-1)
@@ -104,10 +112,20 @@ object VLORExample {
         .setElasticNetParam(elasticNetParam)
         .setGeneratingFeatureMatrixBuffer(generatingFeaturesMatrixBuffer)
         .setRowPartitionSplitNumOnGeneratingFeatureMatrix(rowPartitionSplitNumOnGeneratingFeatureMatrix)
-
+        .setNumCorrections(correctionNumber)
+        .setCompressFeatureMatrix(compressFeatures)
       val vmodel = vtrainer.fit(dataset)
 
       println(s"VLOR done, coeffs non zeros: ${vmodel.coefficients.numNonzeros}")
+      var cnt = 0
+      var valList = new ArrayBuffer[(Int, Double)]()
+      vmodel.coefficients.foreachActive { case (index: Int, value: Double) =>
+        if (cnt < 100) {
+          valList += Tuple2(index, value)
+        }
+        cnt += 1
+      }
+      println(s"first 100 non-zero coeffs\n: ${valList.mkString(",")}")
     } catch {
       case e: Exception =>
         e.printStackTrace()

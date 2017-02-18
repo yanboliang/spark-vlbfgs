@@ -34,7 +34,7 @@ private[spark] class VRDDFunctions[A](self: RDD[A])
   def mapJoinPartition[B: ClassTag, V: ClassTag](rdd2: RDD[B], shuffleRdd2: Boolean = true)(
     idxF: (Int) => Array[Int],
     f: (Int, Iterator[A], Array[(Int, Iterator[B])]) => Iterator[V]
-  ) = self.withScope{
+  ): RDD[V] = self.withScope{
     val sc = self.sparkContext
     val cleanIdxF = sc.clean(idxF)
     val cleanF = sc.clean(f)
@@ -42,7 +42,7 @@ private[spark] class VRDDFunctions[A](self: RDD[A])
       new MapJoinPartitionsRDDV2(sc, cleanIdxF, cleanF, self, rdd2)
     }
     else {
-       logWarning("mapJoinPartition not shuffle RDD2")
+      logWarning("mapJoinPartition not shuffle RDD2")
       new MapJoinPartitionsRDD(sc, cleanIdxF, cleanF, self, rdd2)
     }
   }

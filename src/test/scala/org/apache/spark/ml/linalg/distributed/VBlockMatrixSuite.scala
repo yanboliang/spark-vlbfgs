@@ -18,7 +18,7 @@
 package org.apache.spark.ml.linalg.distributed
 
 import org.apache.spark.SparkFunSuite
-import org.apache.spark.ml.linalg.{SparseMatrix, Vector}
+import org.apache.spark.ml.linalg.{VMatrices, VMatrix, Vector}
 import org.apache.spark.ml.util.VUtils
 import org.apache.spark.ml.util.VUtils._
 import org.apache.spark.mllib.util.MLlibTestSparkContext
@@ -39,14 +39,15 @@ class VBlockMatrixSuite extends SparkFunSuite with MLlibTestSparkContext {
       val rowBlockIdx = idx % rowBlocks
       val colBlockIdx = idx / rowBlocks
       ((rowBlockIdx, colBlockIdx),
-        SparseMatrix.fromCOO(1, 2, Array((0, 0, rowBlockIdx.toDouble), (0, 1, colBlockIdx.toDouble))))
+        VMatrices.COO(1, 2, Array((0, 0, rowBlockIdx.toDouble),
+          (0, 1, colBlockIdx.toDouble))))
     }
     val gridPartitioner = VGridPartitioner(rowBlocks, colBlocks, rowBlocksPerPart, colBlocksPerPart)
     val blockMatrix = new VBlockMatrix(
       1, 2, sc.parallelize(blocks).partitionBy(gridPartitioner), gridPartitioner)
     val arrayData = Array.tabulate(colBlocks)(idx => idx.toDouble)
     val dVector = splitArrIntoDV(sc, arrayData, 1, colBlocks)
-    val f = (blockCoordinate: (Int, Int), block: SparseMatrix, v: Vector) => {
+    val f = (blockCoordinate: (Int, Int), block: VMatrix, v: Vector) => {
       // This is the triple used to be checked below.
       // (rowBlockIdx, colBlockIdx, partVectorIdx)
       (block(0, 0), block(0, 1), v(0))
@@ -76,14 +77,15 @@ class VBlockMatrixSuite extends SparkFunSuite with MLlibTestSparkContext {
       val rowBlockIdx = idx % rowBlocks
       val colBlockIdx = idx / rowBlocks
       ((rowBlockIdx, colBlockIdx),
-        SparseMatrix.fromCOO(1, 2, Array((0, 0, rowBlockIdx.toDouble), (0, 1, colBlockIdx.toDouble))))
+        VMatrices.COO(1, 2, Array((0, 0, rowBlockIdx.toDouble),
+          (0, 1, colBlockIdx.toDouble))))
     }
     val gridPartitioner = VGridPartitioner(rowBlocks, colBlocks, rowBlocksPerPart, colBlocksPerPart)
     val blockMatrix = new VBlockMatrix(
       1, 2, sc.parallelize(blocks).partitionBy(gridPartitioner), gridPartitioner)
     val arrayData = Array.tabulate(rowBlocks)(idx => idx.toDouble)
     val dVector = VUtils.splitArrIntoDV(sc, arrayData, 1, rowBlocks)
-    val f = (blockCoordinate: (Int, Int), block: SparseMatrix, v: Vector) => {
+    val f = (blockCoordinate: (Int, Int), block: VMatrix, v: Vector) => {
       (block(0, 0), block(0, 1), v(0))
     }
     val res = blockMatrix.verticalZipVector(dVector)(f).map {

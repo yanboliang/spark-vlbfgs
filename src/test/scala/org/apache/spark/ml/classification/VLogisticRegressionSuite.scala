@@ -294,6 +294,33 @@ class VLogisticRegressionSuite extends SparkFunSuite with MLlibTestSparkContext 
     assert(vmodel.coefficients ~== model.coefficients relTol 1e-3)
   }
 
+  test("test on testData1, w/ weight, L2 reg = 0.8, w/o standardize, w/o intercept, compress features") {
+
+    val vtrainer = new VLogisticRegression()
+      .setFitIntercept(false)
+      .setColsPerBlock(4)
+      .setRowsPerBlock(5)
+      .setGeneratingFeatureMatrixBuffer(2)
+      .setWeightCol("weight")
+      .setRegParam(0.8)
+      .setStandardization(false)
+      .setEagerPersist(false)
+      .setCompressFeatureMatrix(true)
+    val vmodel = vtrainer.fit(testData1)
+
+    val trainer = new LogisticRegression()
+      .setFitIntercept(false)
+      .setWeightCol("weight")
+      .setRegParam(0.8)
+      .setStandardization(false)
+    val model = trainer.fit(testData1)
+    logInfo(s"LogisticRegression total iterations: ${model.summary.totalIterations}")
+
+    println(s"VLogisticRegression coefficients: ${vmodel.coefficients}\n" +
+      s"LogisticRegression coefficient: ${model.coefficients}")
+    assert(vmodel.coefficients ~== model.coefficients relTol 1e-3)
+  }
+
   test("test on testData1, w/ weight, reg = 0.8, elasticNet = 1.0, w/ standardize, w/o intercept") {
 
     val vtrainer = new VLogisticRegression()
