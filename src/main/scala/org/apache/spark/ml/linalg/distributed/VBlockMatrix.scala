@@ -18,7 +18,7 @@
 package org.apache.spark.ml.linalg.distributed
 
 import org.apache.spark.ml.linalg.{SparseMatrix, Vector}
-import org.apache.spark.rdd.RDD
+import org.apache.spark.rdd.{PartitionCoalescer, RDD}
 
 import scala.collection.mutable.HashMap
 import org.apache.spark.Partitioner
@@ -136,7 +136,7 @@ private[spark] class VGridPartitioner(
   val rowPartitions = math.ceil(rowBlocks * 1.0 / rowBlocksPerPart).toInt
   val colPartitions = math.ceil(colBlocks * 1.0 / colBlocksPerPart).toInt
 
-  override val numPartitions: Int = rowPartitions * colPartitions
+  override def numPartitions: Int = rowPartitions * colPartitions
 
   /**
    * Returns the index of the partition the input coordinate belongs to.
@@ -159,7 +159,7 @@ private[spark] class VGridPartitioner(
   }
 
   /** Partitions sub-matrices as blocks with neighboring sub-matrices. */
-  private def getPartitionId(i: Int, j: Int): Int = {
+  def getPartitionId(i: Int, j: Int): Int = {
     require(0 <= i && i < rowBlocks, s"Row index $i out of range [0, $rowBlocks).")
     require(0 <= j && j < colBlocks, s"Column index $j out of range [0, $colBlocks).")
     i / rowBlocksPerPart + j / colBlocksPerPart * rowPartitions
@@ -184,6 +184,48 @@ private[spark] class VGridPartitioner(
       colBlocks: java.lang.Integer,
       rowBlocksPerPart: java.lang.Integer,
       colBlocksPerPart: java.lang.Integer)
+  }
+
+  def getRowSplitedGridPartitioner(numSplits: Int) = {
+    new VRowSplitedGridPartitioner(
+      rowBlocks, colBlocks, rowBlocksPerPart, colBlocksPerPart, numSplits)
+  }
+
+}
+
+private[spark] class VRowSplitedGridPartitioner(
+    override val rowBlocks: Int,
+    override val colBlocks: Int,
+    override val rowBlocksPerPart: Int,
+    override val colBlocksPerPart: Int,
+    val numSplits: Int)
+  extends VGridPartitioner(rowBlocks, colBlocks, rowBlocksPerPart, colBlocksPerPart)
+{
+  override def getPartition(key: Any): Int = {
+    key match {
+      case (i: Int, j: Int) =>
+        val gridId = super.getPartitionId(i, j)
+        (i % numSplits) * super.numPartitions + gridId
+      case _ =>
+        throw new IllegalArgumentException(s"Unrecognized key: $key.")
+    }
+  }
+
+  override def numPartitions: Int = super.numPartitions * numSplits
+
+  override def equals(obj: Any): Boolean = {
+    obj match {
+      case r: VRowSplitedGridPartitioner =>
+        super.equals(obj) && this.numSplits == r.numSplits
+      case _ =>
+        false
+    }
+  }
+
+  override def hashCode: Int = {
+    com.google.common.base.Objects.hashCode(
+      super.hashCode: java.lang.Integer,
+      numSplits: java.lang.Integer)
   }
 }
 

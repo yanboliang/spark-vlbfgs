@@ -17,8 +17,15 @@
 
 package org.apache.spark.rdd
 
+import java.nio.ByteBuffer
+
+import org.apache.spark.{Partitioner, SparkEnv}
+
 import scala.reflect.ClassTag
+import org.apache.spark.util.collection.OpenHashMap
 import org.apache.spark.internal.Logging
+
+import org.apache.spark.util.SizeEstimator
 
 private[spark] class VRDDFunctions[A](self: RDD[A])
     (implicit at: ClassTag[A])
@@ -35,8 +42,32 @@ private[spark] class VRDDFunctions[A](self: RDD[A])
       new MapJoinPartitionsRDDV2(sc, cleanIdxF, cleanF, self, rdd2)
     }
     else {
-      logWarning("mapJoinPartition not shuffle RDD2")
+       logWarning("mapJoinPartition not shuffle RDD2")
       new MapJoinPartitionsRDD(sc, cleanIdxF, cleanF, self, rdd2)
+    }
+  }
+
+  // This method is only used for testing
+  def addIterForGC(): RDD[A] = {
+    if (System.getProperty("GCTest.addGCIter", "true").toBoolean) {
+      self.mapPartitions { iter: Iterator[A] =>
+        System.gc()
+        var isFirstElem = true
+        new Iterator[A] {
+          override def hasNext: Boolean = iter.hasNext
+
+          override def next(): A = {
+            val elem = iter.next()
+            if (isFirstElem) {
+              System.gc()
+              isFirstElem = false
+            }
+            elem
+          }
+        }
+      }
+    } else {
+      self
     }
   }
 }
@@ -58,3 +89,59 @@ private[spark] object VRDDFunctions {
   }
 
 }
+
+class VPairRDDFunctions[K, V](self: RDD[(K, V)])
+    (implicit kt: ClassTag[K], vt: ClassTag[V])
+  extends Logging with Serializable {
+
+  // This method is only used for testing
+  def aggregateByKeyInMemory[U: ClassTag](zeroValue: U, partitioner: Partitioner)(
+      seqOp: (U, V) => U, combOp: (U, U) => U): RDD[(K, U)] = self.withScope {
+
+    // Serialize the zero value to a byte array so that we can get a new clone of it on each key
+    val zeroBuffer = SparkEnv.get.serializer.newInstance().serialize(zeroValue)
+    val zeroArray = new Array[Byte](zeroBuffer.limit)
+    zeroBuffer.get(zeroArray)
+
+    lazy val cachedSerializer = SparkEnv.get.serializer.newInstance()
+    val createZero = () => cachedSerializer.deserialize[U](ByteBuffer.wrap(zeroArray))
+
+    self.mapPartitions { iter: Iterator[(K, V)] =>
+      org.apache.spark.ml.util.VUtils.printUsedMemory("start aggr partition.")
+      val hashMap = new OpenHashMap[K, U]()
+      var iterIndex = 0
+      iter.foreach { case (key: K, value: V) =>
+        val combinedValue = if (hashMap.contains(key)) {
+          hashMap(key)
+        } else {
+          createZero()
+        }
+        hashMap.update(key, seqOp(combinedValue, value))
+        System.err.println(s"thread: ${Thread.currentThread().getId} idx: ${iterIndex}, estimate aggr map: ${SizeEstimator.estimate(hashMap)}")
+        iterIndex += 1
+      }
+      val res = hashMap.toIterator
+      org.apache.spark.ml.util.VUtils.printUsedMemory("End aggr partition.")
+      res
+    }.partitionBy(partitioner).mapPartitions { iter: Iterator[(K, U)] =>
+      val hashMap = new OpenHashMap[K, U]()
+      iter.foreach { case (key: K, value: U) =>
+        if (hashMap.contains(key)) {
+          val combinedValue = hashMap(key)
+          hashMap.update(key, combOp(combinedValue, value))
+        } else {
+          hashMap.update(key, value)
+        }
+      }
+      hashMap.toIterator
+    }
+  }
+}
+
+private[spark] object VPairRDDFunctions {
+
+  implicit def fromRDD[K: ClassTag, V: ClassTag](rdd: RDD[(K, V)]): VPairRDDFunctions[K, V] = {
+    new VPairRDDFunctions(rdd)
+  }
+}
+

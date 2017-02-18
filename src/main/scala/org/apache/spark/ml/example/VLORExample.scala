@@ -33,31 +33,33 @@ object VLORExample {
     var rowPartitions: Int = 3
     var regParam: Double = 0.5
     var fitIntercept: Boolean = true
-    var eagerPersist: Boolean = true
+    var generatingFeaturesMatrixBuffer: Int = 10000
+    var rowPartitionSplitNumOnGeneratingFeatureMatrix: Int = 2
     var elasticNetParam = 1.0
 
     var dataPath: String = null
+    var waitEnterPressingOnExit: Boolean = false
 
     try {
       maxIter = args(0).toInt
-
       dimension = args(1).toInt
-
       colsPerBlock = args(2).toInt
       rowsPerBlock = args(3).toInt
       colPartitions = args(4).toInt
       rowPartitions = args(5).toInt
       regParam = args(6).toDouble
       fitIntercept = args(7).toBoolean
-      eagerPersist = args(8).toBoolean
-      elasticNetParam = args(9).toDouble
-
-      dataPath = args(10)
+      generatingFeaturesMatrixBuffer = args(8).toInt
+      rowPartitionSplitNumOnGeneratingFeatureMatrix = args(9).toInt
+      elasticNetParam = args(10).toDouble
+      dataPath = args(11)
+      waitEnterPressingOnExit = args(12).toBoolean
     } catch {
       case _: Throwable =>
         println("Param list: "
           + "maxIter dimension colsPerBlock rowsPerBlock colPartitions rowPartitions"
-          + " regParam fitIntercept elasticNetParam dataPath")
+          + " regParam fitIntercept generatingFeaturesMatrixBuffer rowPartitionSplitNumOnGeneratingFeatureMatrix"
+          + " elasticNetParam dataPath waitEnterPressingOnExit")
         println("parameter description:" +
           "\nmaxIter          max iteration number for VLogisticRegression" +
           "\ndimension        training data dimension number" +
@@ -67,9 +69,12 @@ object VLORExample {
           "\nrowPartitions    row partition number of feature block matrix" +
           "\nregParam         regularization parameter" +
           "\nfitIntercept     whether to train intercept, true or false" +
-          "\neagerPersist     whether to eager persist distributed vector, true or false" +
+          "\ngeneratingFeaturesMatrixBuffer   buffer size used to generate features matrix" +
+          "\nrowPartitionSplitNumOnGeneratingFeatureMatrix  row partition splits number on generating features matrix" +
           "\nelasticNetParam  elastic net parameter for regulization" +
-          "\ndataPath         training data path on HDFS")
+          "\ndataPath         training data path on HDFS" +
+          "\nwaitEnterPressingOnExit    whether need press enter to exit."
+        )
 
         System.exit(-1)
     }
@@ -96,18 +101,21 @@ object VLORExample {
         .setRowPartitions(rowPartitions)
         .setRegParam(regParam)
         .setFitIntercept(fitIntercept)
-        .setEagerPersist(eagerPersist)
         .setElasticNetParam(elasticNetParam)
+        .setGeneratingFeatureMatrixBuffer(generatingFeaturesMatrixBuffer)
+        .setRowPartitionSplitNumOnGeneratingFeatureMatrix(rowPartitionSplitNumOnGeneratingFeatureMatrix)
 
       val vmodel = vtrainer.fit(dataset)
 
-      println(s"Vector-free logistic regression coefficients: ${vmodel.coefficients}")
+      println(s"VLOR done, coeffs non zeros: ${vmodel.coefficients.numNonzeros}")
     } catch {
       case e: Exception =>
         e.printStackTrace()
     }finally {
-      println("Press ENTER to exit.")
-      System.in.read()
+      if (waitEnterPressingOnExit) {
+        println("Press ENTER to exit.")
+        System.in.read()
+      }
     }
     sc.stop()
   }

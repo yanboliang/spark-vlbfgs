@@ -20,10 +20,9 @@ package org.apache.spark.ml.util
 import java.util.concurrent.{Callable, ExecutorService, Future}
 
 import scala.collection.mutable.HashMap
-import org.apache.spark.Partitioner
+import org.apache.spark.{Partitioner, SparkContext}
 
 import scala.collection.mutable.ArrayBuffer
-import org.apache.spark.SparkContext
 import org.apache.spark.ml.linalg._
 import org.apache.spark.ml.linalg.distributed.{DistributedVector, DistributedVectorPartitioner}
 import org.apache.spark.rdd.RDD
@@ -32,7 +31,7 @@ import org.apache.spark.util.Utils
 import scala.reflect.ClassTag
 
 
-private[ml] object VUtils {
+private[spark] object VUtils {
 
   def KVRDDToDV(
       rdd: RDD[(Int, Vector)],
@@ -185,6 +184,17 @@ private[ml] object VUtils {
         iter.map((pid, _))
     }.collect()
   }
+
+  // This method is only used for testing
+  def printUsedMemory(tag: String): Unit = {
+    if (System.getProperty("GCTest.doGCWhenPrintMem", "false").toBoolean) {
+      System.gc()
+    }
+    System.err.println(s"thread: ${Thread.currentThread().getId}, tag: ${tag}, mem: ${
+      Runtime.getRuntime.totalMemory() - Runtime.getRuntime.freeMemory()
+    }")
+  }
+
 }
 
 private[spark] class VectorSummarizer extends Serializable {
@@ -206,7 +216,8 @@ private[spark] class VectorSummarizer extends Serializable {
   def merge(s: VectorSummarizer): VectorSummarizer = {
     val sum2 = s.sum
     if (sum == null) {
-      sum = sum2
+      if (sum2 != null)
+        sum = sum2.clone()
     } else {
       require(sum.length == sum2.length)
       var i = 0
