@@ -45,22 +45,26 @@ import scala.collection.mutable.ArrayBuffer
  * @param maxIter max iteration number.
  * @param m correction number for LBFGS. 3 to 7 is usually sufficient.
  * @param tolerance the convergence tolerance of iterations.
+ * @param checkpointInterval checkpoint interval
  * @param eagerPersist whether eagerly persist distributed vectors when calculating.
  */
 class VLBFGS(
     maxIter: Int,
     m: Int = 7,
     tolerance: Double = 1E-9,
-    eagerPersist: Boolean = true) extends Logging {
+    checkpointInterval: Int = 15,
+    eagerPersist: Boolean = true) extends Logging { VLBFGSOptimizer =>
 
-  import VLBFGS._
   require(m > 0)
+
+  require(checkpointInterval <= 0 || checkpointInterval - m >= 5,
+    "checkpoint interval is illegal.")
 
   val fvalMemory: Int = 20
   val relativeTolerance: Boolean = true
 
-  type State = VLBFGS.State
-  type History = VLBFGS.History
+  var currentCheckpointList: ArrayBuffer[DistributedVector] = new ArrayBuffer[DistributedVector]()
+  var prevCheckpointList: ArrayBuffer[DistributedVector] = null
 
   // return Tuple(newValue, newAdjValue, newX, newGrad, newAdjGrad)
   protected def determineAndTakeStepSize(
@@ -92,7 +96,7 @@ class VLBFGS(
       lineSearchDiffFn.disposeLastResult()
       newX = takeStep(state, direction, alpha)
       assert(newX.isPersisted)
-      val (_newValue, _newGrad) = fn.calculate(newX)
+      val (_newValue, _newGrad) = fn.calculate(newX, state.checkAndMarkCheckpoint)
       newValue = _newValue
       newGrad = _newGrad
       assert(newGrad.isPersisted)
@@ -104,11 +108,14 @@ class VLBFGS(
       state: this.State,
       dir: DistributedVector,
       stepSize: Double): DistributedVector = {
-    state.x.addScaledVector(stepSize, dir)
+    val newX = state.x.addScaledVector(stepSize, dir)
       .persist(StorageLevel.MEMORY_AND_DISK, eager = eagerPersist)
+    state.checkAndMarkCheckpoint(newX)
+    newX
   }
 
   protected def adjust(
+      state: this.State,
       newX: DistributedVector,
       newGrad: DistributedVector,
       newVal: Double): (Double, DistributedVector) = (newVal, newGrad)
@@ -133,17 +140,17 @@ class VLBFGS(
     }
   }
 
-  protected def initialState(fn: VDiffFunction, init: DistributedVector): State = {
+  protected def initialState(fn: VDiffFunction, init: DistributedVector, checkpointInterval: Int): State = {
     val x = init
-    val (value, grad) = fn.calculate(x)
-    val (adjValue, adjGrad) = adjust(x, grad, value)
+    val (value, grad) = fn.calculate(x, null)
+    val (adjValue, adjGrad) = adjust(null, x, grad, value)
     new State(x, value, grad, adjValue, adjGrad, 0, adjValue,
-      IndexedSeq(Double.PositiveInfinity), NotConvergedFlag, null, Array[DistributedVector]())
+      IndexedSeq(Double.PositiveInfinity), NotConvergedFlag, null)
   }
 
   // VOWLQN will override this method
   def chooseDescentDirection(history: this.History, state: this.State): DistributedVector = {
-    val direction = history.computeDirection(state.x, state.grad, state.adjustedGradient)
+    val direction = history.computeDirection(state)
     direction.persist(StorageLevel.MEMORY_AND_DISK, eager = eagerPersist)
   }
 
@@ -151,12 +158,11 @@ class VLBFGS(
   // the `init` must be persisted before this interface called.
   def iterations(
       fn: VDiffFunction,
-      init: DistributedVector,
-      shouldCheckpoint: Int => Boolean = _ => false): Iterator[State] = {
+      init: DistributedVector): Iterator[State] = {
 
-    val history: HistoryImpl = HistoryImpl(m, eagerPersist)
+    val history: History = History(m, eagerPersist)
 
-    val state0 = initialState(fn, init)
+    val state0 = initialState(fn, init, checkpointInterval)
 
     val infiniteIterations = Iterator.iterate(state0) { state =>
       try {
@@ -164,39 +170,8 @@ class VLBFGS(
         assert(dir.isPersisted)
         val (value, adjValue, x, grad, adjGrad) = determineAndTakeStepSize(state, fn, dir)
 
-        val newIter = state.iter + 1
-
-        var checkpointList = state.checkpointList
-
-        if (shouldCheckpoint(newIter)) {
-          // checkpoint the whole status at current position,
-          // including `state.x`, `state.grad`, `state.adjustedGradient` (if exists),
-          // `m - 1` numbers of `S` vectors and `m - 1` numbers of `Y` vectors in LBFGS history,
-          // and `lastX` and `lastGrad` vector.
-          val checkpointBuff = new ArrayBuffer[DistributedVector]()
-          checkpointBuff += x
-          checkpointBuff += grad
-          if (adjGrad != grad) {
-            checkpointBuff += adjGrad
-          }
-          // skip the oldest vector in `S` and `Y` history, because the next iteration
-          // these two oldest vectors will be pushed out.
-          checkpointBuff ++= history.S.slice(1, history.S.length)
-          checkpointBuff ++= history.Y.slice(1, history.Y.length)
-          checkpointBuff += history.lastX
-          checkpointBuff += history.lastGrad
-
-          checkpointList = checkpointBuff.toArray.filter(_ != null)
-          // checkpoint these vectors in parallel, and force trigger checkpoint immediately
-          checkpointList.par.map(_.checkpoint(isRDDAlreadyComputed = true, eager = true))
-            .foreach(_.unpersist())
-
-          // After new checkpoint tasks done, we can delete old checkpointed distributed vectors.
-          state.checkpointList.par.foreach(_.deleteCheckpoint())
-        }
-
-        val newState = new State(x, value, grad, adjValue, adjGrad, newIter, state.initialAdjVal,
-          (state.fValHistory :+ value).takeRight(fvalMemory), NotConvergedFlag, dir, checkpointList)
+        val newState = new State(x, value, grad, adjValue, adjGrad, state.iter + 1, state.initialAdjVal,
+          (state.fValHistory :+ value).takeRight(fvalMemory), NotConvergedFlag, dir)
 
         newState.convergenceFlag = checkConvergence(newState)
 
@@ -235,13 +210,11 @@ class VLBFGS(
     }
   }
 
-  def minimize(fn: VDiffFunction, init: DistributedVector): DistributedVector = {
-    minimizeAndReturnState(fn, init).x
-  }
-
-
-  def minimizeAndReturnState(fn: VDiffFunction, init: DistributedVector): State = {
-    iterations(fn, init).last
+  def dispose(): Unit = {
+    currentCheckpointList.foreach(_.deleteCheckpoint())
+    if (prevCheckpointList != null) {
+      prevCheckpointList.foreach(_.deleteCheckpoint())
+    }
   }
 
   // Line Search DiffFunction
@@ -286,9 +259,9 @@ class VLBFGS(
 
         lastAlpha = alpha
 
-        lastX = state.x.addScaledVector(alpha, direction)
-          .persist(StorageLevel.MEMORY_AND_DISK, eager = eagerPersist)
-        val (fnValue, grad) = outer.calculate(lastX)
+        lastX = VLBFGSOptimizer.takeStep(state, direction, alpha)
+
+        val (fnValue, grad) = outer.calculate(lastX, state.checkAndMarkCheckpoint)
 
         assert(grad.isPersisted)
 
@@ -314,23 +287,6 @@ class VLBFGS(
       }
     }
   }
-}
-
-abstract class VDiffFunction(eagerPersist: Boolean = true) { outer =>
-
-  // calculates the gradient at a point
-  def gradientAt(x: DistributedVector): DistributedVector = calculate(x)._2
-
-  // calculates the value at a point
-  def valueAt(x: DistributedVector): Double = calculate(x)._1
-
-  final def apply(x: DistributedVector): Double = valueAt(x)
-
-  // Calculates both the value and the gradient at a point
-  def calculate(x: DistributedVector): (Double, DistributedVector)
-}
-
-object VLBFGS {
 
   val NotConvergedFlag = 0
   val MaxIterationsReachedFlag = 1
@@ -348,8 +304,23 @@ object VLBFGS {
     val initialAdjVal: Double,
     val fValHistory: IndexedSeq[Double],
     var convergenceFlag: Int,
-    var direction: DistributedVector,
-    var checkpointList: Array[DistributedVector]) {
+    var direction: DistributedVector) {
+
+    def shouldCheckpoint(): Boolean = {
+      VLBFGSOptimizer.checkpointInterval > 0 && iter > 1 &&
+        (iter % VLBFGSOptimizer.checkpointInterval) == 0
+    }
+
+    def markCheckpoint(vector: DistributedVector): Unit = {
+      vector.checkpoint()
+      VLBFGSOptimizer.currentCheckpointList += vector
+    }
+
+    val checkAndMarkCheckpoint = (vector: DistributedVector) => {
+      if (shouldCheckpoint()) {
+        markCheckpoint(vector)
+      }
+    }
 
     def dispose(iterationFinished: Boolean) = {
       // If iteration hasn't finished,
@@ -368,16 +339,10 @@ object VLBFGS {
         direction.unpersist()
         direction = null
       }
-      checkpointList = null
     }
   }
 
-  trait History {
-    def dispose()
-    def computeDirection(newX: DistributedVector, newGrad: DistributedVector, newAdjGrad: DistributedVector): DistributedVector
-  }
-
-  case class HistoryImpl(m: Int, eagerPersist: Boolean) extends History {
+  case class History(m: Int, eagerPersist: Boolean) {
     require(m > 0)
 
     private var k = 0
@@ -391,6 +356,13 @@ object VLBFGS {
 
     var lastX: DistributedVector = null
     var lastGrad: DistributedVector = null
+
+    def shouldCheckpointLBFGSSiYi(state: State): Boolean = {
+      if (checkpointInterval > 0 && state.iter > 1) {
+        val mod = state.iter % VLBFGSOptimizer.checkpointInterval
+        (mod <= 1 || mod >= VLBFGSOptimizer.checkpointInterval - m + 2)
+      } else false
+    }
 
     def dispose = {
       for (i <- 0 until m) {
@@ -432,7 +404,11 @@ object VLBFGS {
 
     // In LBFGS newAdjGrad == newGrad, but in OWLQN, newAdjGrad contains L1 pseudo-gradient
     // Note: The approximate Hessian computed in LBFGS must use `grad` without L1 pseudo-gradient
-    def computeDirection(newX: DistributedVector, newGrad: DistributedVector, newAdjGrad: DistributedVector): DistributedVector = {
+    def computeDirection(state: State): DistributedVector = {
+      val newX = state.x
+      val newGrad = state.grad
+      val newAdjGrad = state.adjustedGradient
+
       val dir = if (k == 0) {
         lastX = newX
         lastGrad = newGrad
@@ -445,6 +421,11 @@ object VLBFGS {
 
         newS = newX.sub(lastX).persist(StorageLevel.MEMORY_AND_DISK, eager = false)
         newY = newGrad.sub(lastGrad).persist(StorageLevel.MEMORY_AND_DISK, eager = false)
+
+        if (shouldCheckpointLBFGSSiYi(state)) {
+          state.markCheckpoint(newS)
+          state.markCheckpoint(newY)
+        }
 
         // push `newS` and `newY` into LBFGS S & Y vector history.
         push(S, newS)
@@ -532,6 +513,22 @@ object VLBFGS {
         lastX.unpersist()
         lastGrad.unpersist()
 
+        // check whether new round vectors have been all checkpointed.
+        if (newX.isCheckpointed) {
+          // make sure `newGrad`, `newAdjGrad`, last m `S` and last m `Y` vectors have been checkpointed.
+          assert(newGrad.isCheckpointed)
+          assert(newAdjGrad.isCheckpointed)
+          S.foreach(v => assert(v.isCheckpointed))
+          Y.foreach(v => assert(v.isCheckpointed))
+
+          logInfo("new checkpoint round finished.")
+          if (VLBFGSOptimizer.prevCheckpointList != null) {
+            VLBFGSOptimizer.prevCheckpointList.foreach(_.deleteCheckpoint())
+          }
+          VLBFGSOptimizer.prevCheckpointList = VLBFGSOptimizer.currentCheckpointList
+          VLBFGSOptimizer.currentCheckpointList = new ArrayBuffer[DistributedVector]()
+        }
+
         lastX = newX
         lastGrad = newGrad
 
@@ -580,4 +577,11 @@ object VLBFGS {
       dir
     }
   }
+}
+
+abstract class VDiffFunction(eagerPersist: Boolean = true) { outer =>
+
+  // Calculates both the value and the gradient at a point
+  def calculate(x: DistributedVector, checkAndMarkCheckpoint: DistributedVector => Unit):
+  (Double, DistributedVector)
 }

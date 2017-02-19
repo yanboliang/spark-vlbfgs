@@ -486,6 +486,7 @@ class VLogisticRegression(override val uid: String)
         maxIter = $(maxIter),
         m = $(numCorrections),
         tolerance = $(tol),
+        checkpointInterval = $(checkpointInterval),
         eagerPersist = $(eagerPersist)
       )
     } else {
@@ -496,6 +497,7 @@ class VLogisticRegression(override val uid: String)
           m = $(numCorrections),
           l1RegValue = (regParamL1, fitInterceptParam),
           tolerance = $(tol),
+          checkpointInterval = $(checkpointInterval),
           eagerPersist = $(eagerPersist)
         )
       } else {
@@ -526,6 +528,7 @@ class VLogisticRegression(override val uid: String)
           m = $(numCorrections),
           l1Reg = regParamL1DV,
           tolerance = $(tol),
+          checkpointInterval = $(checkpointInterval),
           eagerPersist = $(eagerPersist)
         )
       }
@@ -553,14 +556,7 @@ class VLogisticRegression(override val uid: String)
     initCoeffs.persist(StorageLevel.MEMORY_AND_DISK, eager = $(eagerPersist))
 
     var state: optimizer.State = null
-    val shouldCheckpoint: Int => Boolean = (iter) => {
-      if (sc.checkpointDir.isEmpty) {
-        logWarning("Cannot checkpoint because checkpointDir is not set.")
-      }
-      sc.checkpointDir.isDefined && $(checkpointInterval) != -1 &&
-        (iter % $(checkpointInterval) == 0)
-    }
-    val states = optimizer.iterations(costFun, initCoeffs, shouldCheckpoint)
+    val states = optimizer.iterations(costFun, initCoeffs)
 
     while (states.hasNext) {
       val startTime = System.currentTimeMillis()
@@ -610,9 +606,9 @@ class VLogisticRegression(override val uid: String)
     // here must eager persist the RDD, because we need the interceptValAccu value now.
 
     val interceptVal = interceptValAccu.value
-    val model = copyValues(new VLogisticRegressionModel(uid, coeffs.toLocal, interceptVal))
-    state.checkpointList.foreach(_.deleteCheckpoint())
+    val model = copyValues(new VLogisticRegressionModel(uid, coeffs.toLocalSparse, interceptVal))
     state.dispose(true)
+    optimizer.dispose()
     model
   }
 
@@ -632,7 +628,8 @@ private[ml] class VBinomialLogisticCostFun(
     eagerPersist: Boolean) extends VDiffFunction(eagerPersist) {
 
   // Calculates both the value and the gradient at a point
-  override def calculate(coefficients: DistributedVector): (Double, DistributedVector) = {
+  override def calculate(coefficients: DistributedVector, checkAndMarkCheckpoint: DistributedVector => Unit):
+      (Double, DistributedVector) = {
 
     val features: VBlockMatrix = _features
     val numFeatures: Long = _numFeatures
@@ -786,6 +783,10 @@ private[ml] class VBinomialLogisticCostFun(
       }
     }
 
+    // possible checkpoint(determined by the checkpointInterval) first, then eager persist
+    if (checkAndMarkCheckpoint != null) {
+      checkAndMarkCheckpoint(gradWithReg)
+    }
     // here must eager persist the RDD, because we need the lossRegAccu value now.
     gradWithReg.persist(StorageLevel.MEMORY_AND_DISK, eager = true)
 

@@ -59,9 +59,12 @@ class VLBFGSSuite extends SparkFunSuite with MLlibTestSparkContext {
       }
     }
     val vDiffFun = new VDiffFunction {
-      def calculate(x: DistributedVector) = {
+      def calculate(x: DistributedVector, checkAndMarkCheckpoint: DistributedVector => Unit) = {
         val n = x.add(-3.0).norm
-        (n * n, x.scale(2.0).add(-6.0).persist(StorageLevel.MEMORY_AND_DISK, eager = true))
+        val dv = x.scale(2.0).add(-6.0)
+        if (checkAndMarkCheckpoint != null) { checkAndMarkCheckpoint(dv) }
+        dv.persist(StorageLevel.MEMORY_AND_DISK, eager = true)
+        (n * n, dv)
       }
     }
 
@@ -118,15 +121,18 @@ class VLBFGSSuite extends SparkFunSuite with MLlibTestSparkContext {
       def calculate(x: BDV[Double]) = calc(x)
     }
     val vDiffFun = new VDiffFunction {
-      def calculate(x: DistributedVector) = {
+      def calculate(x: DistributedVector, checkAndMarkCheckpoint: DistributedVector => Unit) = {
         val r = calc(new BDV(x.toLocal.toArray))
         val rr = r._2.toArray
-        (r._1, VUtils.splitArrIntoDV(sc, rr, sizePerPart, numPartitions).persist())
+        val dv = VUtils.splitArrIntoDV(sc, rr, sizePerPart, numPartitions)
+        if (checkAndMarkCheckpoint != null) { checkAndMarkCheckpoint(dv) }
+        dv.persist()
+        (r._1, dv)
       }
     }
 
     val lbfgsIter = lbfgs.iterations(bDiffFun, initBDV)
-    val vlbfgsIter = vlbfgs.iterations(vDiffFun, initDV, iter => iter % 15 == 0)
+    val vlbfgsIter = vlbfgs.iterations(vDiffFun, initDV)
 
     var bState: lbfgs.State = null
     var vState: vlbfgs.State = null
