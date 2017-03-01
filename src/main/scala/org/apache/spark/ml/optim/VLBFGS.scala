@@ -20,9 +20,9 @@ package org.apache.spark.ml.optim
 import breeze.optimize.{DiffFunction, StepSizeUnderflow, StrongWolfeLineSearch}
 import breeze.util.Implicits.scEnrichIterator
 import org.apache.spark.internal.Logging
-import org.apache.spark.ml.linalg.distributed.{DistributedVector, DistributedVectors}
+import org.apache.spark.ml.linalg.distributed.{DistributedVector, DistributedVectorPartitioner, DistributedVectors}
 import org.apache.spark.ml.linalg.{BLAS, Vector}
-import org.apache.spark.rdd.VRDDFunctions
+import org.apache.spark.rdd.{RDD, VRDDFunctions}
 import org.apache.spark.storage.StorageLevel
 
 import scala.collection.mutable.ArrayBuffer
@@ -416,11 +416,10 @@ class VLBFGS(
       } else {
         val newSYTaskList = Seq("S", "Y")
 
-        var newS: DistributedVector = null
-        var newY: DistributedVector = null
-
-        newS = newX.sub(lastX).persist(StorageLevel.MEMORY_AND_DISK, eager = false)
-        newY = newGrad.sub(lastGrad).persist(StorageLevel.MEMORY_AND_DISK, eager = false)
+        val newS: DistributedVector = newX.sub(lastX)
+          .persist(StorageLevel.MEMORY_AND_DISK, eager = false)
+        val newY: DistributedVector = newGrad.sub(lastGrad)
+          .persist(StorageLevel.MEMORY_AND_DISK, eager = false)
 
         if (shouldCheckpointLBFGSSiYi(state)) {
           state.markCheckpoint(newS)
@@ -446,17 +445,22 @@ class VLBFGS(
         // calculate dot products between 2M + 1 distributed vectors
         // only calulate the dot products of new added`S`, `Y` and `adjGrad`
         // with `M - 1` history `S` and `Y` vectors
-        // use `VRDDFunctions.zipMultiRDDs` instead of launching multiple jobs of `RDD.zip`
+        // use `union` + `repartition` instead of launching multiple jobs of `RDD.zip`
         // such way can save IO cost because when calculating,
         // only need to load newest `S`, newest `Y` and `adjGrad` partitions once.
-        val dotArr = VRDDFunctions.zipMultiRDDs(rddList) {
-          iterList: List[Iterator[Vector]] =>
-            val SVecIterList = iterList.slice(0, localM - start)
-            val YVecIterList = iterList.slice(localM - start, 2 * (localM - start))
+        val dotArr = newX.values.sparkContext.union(rddList.zipWithIndex.map { case (rdd: RDD[Vector], index: Int) =>
+          rdd.mapPartitionsWithIndex { case (pid: Int, iter: Iterator[Vector]) =>
+            iter.map(v => (pid, (index, v)))
+          }
+        }).partitionBy(new DistributedVectorPartitioner(newX.numPartitions)).map(_._2).glom()
+          .map(list => list.sortBy(_._1).map(_._2)).map {
+          vecList: Array[Vector] =>
+            val SVecList = vecList.slice(0, localM - start)
+            val YVecList = vecList.slice(localM - start, 2 * (localM - start))
 
-            val adjGradVec = iterList(iterList.size - 1).next()
-            val newSVec = SVecIterList(SVecIterList.size - 1).next()
-            val newYVec = YVecIterList(YVecIterList.size - 1).next()
+            val adjGradVec = vecList(vecList.size - 1)
+            val newSVec = SVecList(SVecList.size - 1)
+            val newYVec = YVecList(YVecList.size - 1)
 
             val ssDot = new Array[Double](localM)
             val yyDot = new Array[Double](localM)
@@ -466,16 +470,16 @@ class VLBFGS(
             val ygDot = new Array[Double](localM)
 
             var i = 0
-            while(i < SVecIterList.size - 1) {
-              val SVec = SVecIterList(i).next()
+            while(i < SVecList.size - 1) {
+              val SVec = SVecList(i)
               ssDot(start + i) = BLAS.dot(SVec, newSVec)
               syDot(start + i) = BLAS.dot(SVec, newYVec)
               sgDot(start + i) = BLAS.dot(SVec, adjGradVec)
               i += 1
             }
             i = 0
-            while(i < YVecIterList.size - 1) {
-              val YVec = YVecIterList(i).next()
+            while(i < YVecList.size - 1) {
+              val YVec = YVecList(i)
               ysDot(start + i) = BLAS.dot(YVec, newSVec)
               yyDot(start + i) = BLAS.dot(YVec, newYVec)
               ygDot(start + i) = BLAS.dot(YVec, adjGradVec)
@@ -488,8 +492,7 @@ class VLBFGS(
             sgDot(mm1) = BLAS.dot(newSVec, adjGradVec)
             ygDot(mm1) = BLAS.dot(newYVec, adjGradVec)
 
-            iterList.foreach(iter => assert(!(iter.hasNext)))
-            Iterator(Array.concat(ssDot, yyDot, syDot, ysDot, sgDot, ygDot))
+            Array.concat(ssDot, yyDot, syDot, ysDot, sgDot, ygDot)
         }.reduce((a1, a2) => a1.zip(a2).map(t => t._1 + t._2))
 
         val ssDot = dotArr.slice(0, m)
@@ -508,8 +511,9 @@ class VLBFGS(
           SYdot(mm1)(i) = ysDot(i)
         }
 
-        // After vecter dot computation, we can make sure all lazy persisted vectors are
-        // actually persisted. So now we can release `lastX` and `lastGrad`
+        // After dot products between these vectors have been computed, we can make sure that
+        // `newS` and `newY` computed and `lastX` and `lastGrad` won't be used,
+        // we can unpersist `lastX` and `lastGrad`
         lastX.unpersist()
         lastGrad.unpersist()
 

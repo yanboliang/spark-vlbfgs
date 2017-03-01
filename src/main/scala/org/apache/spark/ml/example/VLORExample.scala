@@ -44,6 +44,8 @@ object VLORExample {
     var correctionNumber: Int = 10
     var compressFeatures: Boolean = false
 
+    var checkpointInterval: Int = 15
+
     try {
       maxIter = args(0).toInt
       dimension = args(1).toInt
@@ -60,6 +62,7 @@ object VLORExample {
       waitEnterPressingOnExit = args(12).toBoolean
       correctionNumber = args(13).toInt
       compressFeatures = args(14).toBoolean
+      checkpointInterval = args(15).toInt
     } catch {
       case _: Throwable =>
         println("Param list: "
@@ -81,7 +84,8 @@ object VLORExample {
           "\ndataPath         training data path on HDFS" +
           "\nwaitEnterPressingOnExit    whether need press enter to exit." +
           "\ncorrectionNumber       correction number for LBFGS" +
-          "\ncompressFeatures       whether to compress features using float"
+          "\ncompressFeatures       whether to compress features using float" +
+          "\ncheckpointInterval     checkpoint interval"
         )
 
         System.exit(-1)
@@ -114,6 +118,7 @@ object VLORExample {
         .setRowPartitionSplitNumOnGeneratingFeatureMatrix(rowPartitionSplitNumOnGeneratingFeatureMatrix)
         .setNumCorrections(correctionNumber)
         .setCompressFeatureMatrix(compressFeatures)
+        .setCheckpointInterval(checkpointInterval)
       val vmodel = vtrainer.fit(dataset)
 
       println(s"VLOR done, coeffs non zeros: ${vmodel.coefficients.numNonzeros}")
