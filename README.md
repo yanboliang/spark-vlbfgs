@@ -68,6 +68,11 @@ You can train a logistic regression model via spark-vlbfgs API which is consiste
 
     println(s"Vector-free logistic regression coefficients: ${model.coefficients}")
 
+## Talks
+
+* [Scaling Apache Spark MLlib to Billions of Parameters (Spark Summit East 2017)](https://spark-summit.org/east-2017/events/scaling-apache-spark-mllib-to-billions-of-parameters/)
+* [Large-scale Ads CTR Prediction with Spark and Deep Learning: Lessons Learned (Spark Summit 2017)](https://spark-summit.org/2017/events/large-scale-ads-ctr-prediction-with-spark-and-deep-learning-lessons-learned/)
+
 ## Reference
 
 * [Large-scale L-BFGS using MapReduce](https://papers.nips.cc/paper/5333-large-scale-l-bfgs-using-mapreduce.pdf)
