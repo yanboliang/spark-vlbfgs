@@ -19,12 +19,15 @@ package org.apache.spark.ml.util
 
 import java.util.concurrent.{Callable, ExecutorService, Future}
 
-import scala.collection.mutable.HashMap
-import org.apache.spark.{Partitioner, SparkContext}
+import org.apache.spark.ml.feature.Instance
+
+import org.apache.spark.SparkContext
 
 import scala.collection.mutable.ArrayBuffer
 import org.apache.spark.ml.linalg._
-import org.apache.spark.ml.linalg.distributed.{DistributedVector, DistributedVectorPartitioner}
+import org.apache.spark.ml.linalg.distributed.{DistributedVector, DistributedVectorPartitioner, VBlockMatrix, VGridPartitioner}
+import org.apache.spark.mllib.linalg.VectorImplicits._
+import org.apache.spark.mllib.stat.OptimMultivariateOnlineSummarizer
 import org.apache.spark.rdd.RDD
 import org.apache.spark.util.Utils
 
@@ -195,6 +198,179 @@ private[spark] object VUtils {
     }")
   }
 
+  // TODO: add test
+  // Don't modify it before test added.
+  def packLabelsAndWeights(partitionSizes: Array[Long], labelsAndWeights: RDD[(Double, Double)],
+                           rowsPerBlock: Int, rowBlocks: Int): RDD[(Array[Double], Array[Double])]
+  = {
+    VUtils.zipRDDWithIndex(partitionSizes, labelsAndWeights)
+      .map { case (rowIdx: Long, (label: Double, weight: Double)) =>
+        val rowBlockIdx = (rowIdx / rowsPerBlock).toInt
+        val inBlockIdx = (rowIdx % rowsPerBlock).toInt
+        (rowBlockIdx, (inBlockIdx, label, weight))
+      }
+      .groupByKey(new DistributedVectorPartitioner(rowBlocks))
+      .map { case (rowBlockIdx: Int, iter: Iterable[(Int, Double, Double)]) =>
+        val tupleArr = iter.toArray.sortWith(_._1 < _._1)
+        val labelArr = Array.tabulate(tupleArr.length)(idx => tupleArr(idx)._2)
+        val weightArr = Array.tabulate(tupleArr.length)(idx => tupleArr(idx)._3)
+        (labelArr, weightArr)
+      }
+  }
+
+  // TODO: add test
+  // Don't modify it before test added.
+  def genRawFeatureBlocks(
+      partitionSizes: Array[Long],
+      instances: RDD[Instance],
+      numFeatures: Long,
+      numInstances: Long,
+      colBlocks: Int,
+      rowBlocks: Int,
+      colsPerBlock: Int,
+      rowsPerBlock: Int,
+      colPartitions: Int,
+      rowPartitions: Int,
+      compressFeatureMatrix: Boolean,
+      generatingFeatureMatrixBuffer: Int,
+      rowPartitionSplitNumOnGeneratingFeatureMatrix: Int): VBlockMatrix = {
+
+    var localRowPartitions = rowPartitions
+    var localColPartitions = colPartitions
+    if (localRowPartitions > rowBlocks) localRowPartitions = rowBlocks
+    if (localColPartitions > colBlocks) localColPartitions = colBlocks
+
+    val gridPartitioner = new VGridPartitioner(
+      rowBlocks,
+      colBlocks,
+      rowBlocks / localRowPartitions,
+      colBlocks / localColPartitions
+    )
+    val rowSplitedGridPartitioner = gridPartitioner.getRowSplitedGridPartitioner(
+      rowPartitionSplitNumOnGeneratingFeatureMatrix
+    )
+
+    val lastBlockColSize = (numFeatures - (colBlocks - 1) * colsPerBlock).toInt
+    val lastBlockRowSize = (numInstances - (rowBlocks - 1) * rowsPerBlock).toInt
+
+    var rawFeatureBlocks: RDD[((Int, Int), VMatrix)] =
+      VUtils.zipRDDWithIndex(partitionSizes, instances)
+        .mapPartitions { iter: Iterator[(Long, Instance)] =>
+          new Iterator[Array[((Int, Int), (Array[Int], Array[Int], Array[Double]))]] {
+
+            override def hasNext: Boolean = iter.hasNext
+
+            override def next(): Array[((Int, Int), (Array[Int], Array[Int], Array[Double]))] = {
+              val buffArr = Array.fill(colBlocks)(
+                Tuple3(new ArrayBuffer[Int], new ArrayBuffer[Int], new ArrayBuffer[Double]))
+
+              var shouldBreak = false
+              var blockRowIndex = -1
+              while (iter.hasNext && !shouldBreak) {
+                val (rowIndex: Long, instance: Instance) = iter.next()
+                if (blockRowIndex == -1) {
+                  blockRowIndex = (rowIndex / rowsPerBlock).toInt
+                }
+                val inBlockRowIndex = (rowIndex % rowsPerBlock).toInt
+                instance.features.foreachActive { (colIndex: Int, value: Double) =>
+                  val blockColIndex = colIndex / colsPerBlock
+                  val inBlockColIndex = colIndex % colsPerBlock
+                  val COOBuffTuple = buffArr(blockColIndex)
+                  COOBuffTuple._1 += inBlockRowIndex
+                  COOBuffTuple._2 += inBlockColIndex
+                  COOBuffTuple._3 += value
+                }
+                if (inBlockRowIndex == rowsPerBlock - 1 ||
+                  inBlockRowIndex % generatingFeatureMatrixBuffer ==
+                    generatingFeatureMatrixBuffer - 1
+                ) {
+                  shouldBreak = true
+                }
+              }
+              buffArr.zipWithIndex.map { case (tuple: (ArrayBuffer[Int], ArrayBuffer[Int],
+                ArrayBuffer[Double]), blockColIndex: Int) =>
+                ((blockRowIndex, blockColIndex),
+                  (tuple._1.toArray, tuple._2.toArray, tuple._3.toArray))
+              }
+            }
+          }.flatMap(_.toIterator)
+        }
+        .groupByKey(rowSplitedGridPartitioner)
+        .map { case (coodinate: (Int, Int), cooList: Iterable[(Array[Int], Array[Int], Array[Double])]) =>
+          val cooBuff = new ArrayBuffer[(Int, Int, Double)]
+          cooList.foreach { case (rowIndices: Array[Int], colIndices: Array[Int], values: Array[Double]) =>
+            var i = 0
+            while (i < rowIndices.length) {
+              cooBuff += Tuple3(rowIndices(i), colIndices(i), values(i))
+              i += 1
+            }
+          }
+          val numRows = if (coodinate._1 == rowBlocks - 1) lastBlockRowSize else rowsPerBlock
+          val numCols = if (coodinate._2 == colBlocks - 1) lastBlockColSize else colsPerBlock
+          (coodinate, VMatrices.COO(numRows, numCols, cooBuff, compressFeatureMatrix))
+        }
+    if (rowPartitionSplitNumOnGeneratingFeatureMatrix > 1) {
+      rawFeatureBlocks = rawFeatureBlocks.partitionBy(gridPartitioner)
+    }
+
+    new VBlockMatrix(
+      rowsPerBlock, colsPerBlock, rawFeatureBlocks, gridPartitioner)
+  }
+
+  // TODO: add test
+  // Don't modify it before test added.
+  def genFeatureStd(
+      rawFeatures: VBlockMatrix,
+      weightDV: DistributedVector,
+      colsPerBlock: Int,
+      colBlocks: Int,
+      numFeatures: Long) = {
+    val summarizerSeqOp = (summarizer: OptimMultivariateOnlineSummarizer,
+                           tuple: (VMatrix, Vector)) => {
+      val (block, weight) = tuple
+      block.rowIter.zip(weight.toArray.toIterator).foreach {
+        case (rowVector: Vector, weight: Double) =>
+          summarizer.add(rowVector, weight)
+      }
+      summarizer
+    }
+    val summarizerCombineOp = (s1: OptimMultivariateOnlineSummarizer,
+                               s2: OptimMultivariateOnlineSummarizer) => s1.merge(s2)
+
+    val featureStdSummarizerRDD = rawFeatures.verticalZipVector(weightDV) {
+      (blockCoordinate: (Int, Int), block: VMatrix, weight: Vector) => (block, weight)
+    }.map { case ((rowBlockIdx: Int, colBlockIdx: Int), tuple: (VMatrix, Vector)) =>
+      (colBlockIdx, tuple)
+    }.aggregateByKey(
+      new OptimMultivariateOnlineSummarizer(
+        OptimMultivariateOnlineSummarizer.varianceMask),
+      new DistributedVectorPartitioner(colBlocks)
+    )(summarizerSeqOp, summarizerCombineOp)
+
+    val featureStdRDD: RDD[Vector] = featureStdSummarizerRDD.values.map { summarizer =>
+      Vectors.dense(summarizer.variance.toArray.map(math.sqrt))
+    }
+
+    new DistributedVector(
+      featureStdRDD, colsPerBlock, colBlocks, numFeatures)
+  }
+
+  // TODO: add test
+  // Don't modify it before test added.
+  def genFeatureBlocks(rawFeatures: VBlockMatrix, compressFeatureMatrix: Boolean,
+                       featuresStd: DistributedVector): VBlockMatrix = {
+    rawFeatures.horizontalZipVector2(featuresStd) {
+      (blockCoordinate: (Int, Int), block: VMatrix, partFeaturesStd: Vector) =>
+        val partFeatureStdArr = partFeaturesStd.asInstanceOf[DenseVector].values
+        val arrBuf = new ArrayBuffer[(Int, Int, Double)]()
+        block.foreachActive { case (i: Int, j: Int, value: Double) =>
+          if (partFeatureStdArr(j) != 0 && value != 0) {
+            arrBuf.append((i, j, value / partFeatureStdArr(j)))
+          }
+        }
+        VMatrices.COO(block.numRows, block.numCols, arrBuf, compressFeatureMatrix)
+    }
+  }
 }
 
 private[spark] class VectorSummarizer extends Serializable {
