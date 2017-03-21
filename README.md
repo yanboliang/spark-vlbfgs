@@ -19,6 +19,7 @@ The algorithm scales very well and enables a variety of MLlib algorithms to hand
 spark-vlbfgs currently supports the following algorithms:
 
 * Logistic Regression
+* Linear Regression
 
 with regularization:
 
@@ -28,7 +29,6 @@ with regularization:
 
 To be supported:
 
-* Linear Regression
 * Softmax Regression
 * Multilayer Perceptron Classifier
 
