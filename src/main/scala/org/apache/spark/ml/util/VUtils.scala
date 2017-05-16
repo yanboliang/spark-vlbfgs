@@ -20,10 +20,9 @@ package org.apache.spark.ml.util
 import java.util.concurrent.{Callable, ExecutorService, Future}
 
 import org.apache.spark.ml.feature.Instance
-
 import org.apache.spark.SparkContext
 
-import scala.collection.mutable.ArrayBuffer
+import scala.collection.mutable.{ArrayBuffer, ArrayBuilder}
 import org.apache.spark.ml.linalg._
 import org.apache.spark.ml.linalg.distributed.{DistributedVector, DistributedVectorPartitioner, VBlockMatrix, VGridPartitioner}
 import org.apache.spark.mllib.linalg.VectorImplicits._
@@ -370,6 +369,55 @@ private[spark] object VUtils {
         }
         VMatrices.COO(block.numRows, block.numCols, arrBuf, compressFeatureMatrix)
     }
+  }
+
+  // TODO: add test
+  // Don't modify it before test added.
+  def sparseVectorToColumnMajorSparseMatrix(numRows: Int, numCols: Int, sv: SparseVector)
+  : SparseMatrix = {
+    val numEntries = sv.size
+
+    val colPtrs = new Array[Int](numCols + 1)
+    val rowIndices = ArrayBuilder.make[Int]
+    rowIndices.sizeHint(numEntries)
+    val values = ArrayBuilder.make[Double]
+    values.sizeHint(numEntries)
+    var nnz = 0
+    var prevCol = 0
+    var prevRow = -1
+    var prevVal = 0.0
+
+    val loopFun = (i: Int, j: Int, v: Double) => {
+      if (v != 0) {
+        if (i == prevRow && j == prevCol) {
+          prevVal += v
+        } else {
+          if (prevVal != 0) {
+            require(prevRow >= 0 && prevRow < numRows,
+              s"Row index out of range [0, $numRows): $prevRow.")
+            nnz += 1
+            rowIndices += prevRow
+            values += prevVal
+          }
+          prevRow = i
+          prevVal = v
+          while (prevCol < j) {
+            colPtrs(prevCol + 1) = nnz
+            prevCol += 1
+          }
+        }
+      }
+    }
+
+    sv.foreachActive { (index: Int, v: Double) =>
+      val i = index % numRows
+      val j = index / numRows
+      loopFun(i, j, v)
+    }
+
+    loopFun(numRows, numCols, 1.0)
+
+    new SparseMatrix(numRows, numCols, colPtrs, rowIndices.result(), values.result())
   }
 }
 

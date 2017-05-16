@@ -62,6 +62,7 @@ class VLinearRegressionSuite extends SparkFunSuite with MLlibTestSparkContext {
             .setFitIntercept(fitIntercept)
             .setStandardization(standardization)
             .setRegParam(reg)
+            .setWeightCol("weight")
             .setElasticNetParam(elasticNet)
           val vmodel = vtrainer.fit(datasetWithWeight)
 
@@ -74,6 +75,7 @@ class VLinearRegressionSuite extends SparkFunSuite with MLlibTestSparkContext {
             .setFitIntercept(fitIntercept)
             .setStandardization(standardization)
             .setRegParam(reg)
+            .setWeightCol("weight")
             .setElasticNetParam(elasticNet)
 
           val model = trainer.fit(datasetWithWeight)

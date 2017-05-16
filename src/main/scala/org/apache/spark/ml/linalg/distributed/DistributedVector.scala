@@ -188,6 +188,25 @@ class DistributedVector(
         }, sizePerPart, numPartitions, size)
   }
 
+  def zipPartitionsWithIndex(
+      dv2: DistributedVector,
+      dv3: DistributedVector,
+      newSizePerPart: Int,
+      newSize: Long)
+      (f: (Int, Vector, Vector, Vector) => Vector): DistributedVector = {
+
+    require(numPartitions == dv2.numPartitions)
+    require(numPartitions == dv3.numPartitions)
+
+    new DistributedVector(
+      values.zip(dv2.values).zip(dv3.values).mapPartitionsWithIndex {
+        case (pid: Int, iter: Iterator[((Vector, Vector), Vector)]) =>
+          iter.map { case ((vec1: Vector, vec2: Vector), vec3: Vector) =>
+            f(pid, vec1, vec2, vec3)
+          }
+      }, newSizePerPart, numPartitions, newSize)
+  }
+
   // transform into local sparse vector, optimized to save memory in best.
   def toLocalSparse: Vector = {
     require(size < Int.MaxValue)

@@ -20,6 +20,7 @@ spark-vlbfgs currently supports the following algorithms:
 
 * Logistic Regression
 * Linear Regression
+* Softmax Regression
 
 with regularization:
 
@@ -29,7 +30,6 @@ with regularization:
 
 To be supported:
 
-* Softmax Regression
 * Multilayer Perceptron Classifier
 
 ## Build and run spark-vlbfgs
