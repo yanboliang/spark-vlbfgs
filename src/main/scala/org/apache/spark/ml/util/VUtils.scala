@@ -59,7 +59,6 @@ private[spark] object VUtils {
       numPartitions: Int): DistributedVector = {
     var i = 0
     val splitArr = new Array[Array[Double]](numPartitions)
-    val lastSplitSize = arr.length - sizePerPart * (numPartitions - 1)
     while (i < numPartitions) {
       if (i < numPartitions - 1) splitArr(i) = arr.slice(sizePerPart * i, sizePerPart * i + sizePerPart)
       else splitArr(i) = arr.slice(sizePerPart * i, arr.length)
@@ -199,9 +198,11 @@ private[spark] object VUtils {
 
   // TODO: add test
   // Don't modify it before test added.
-  def packLabelsAndWeights(partitionSizes: Array[Long], labelsAndWeights: RDD[(Double, Double)],
-                           rowsPerBlock: Int, rowBlocks: Int): RDD[(Array[Double], Array[Double])]
-  = {
+  def packLabelsAndWeights(
+      partitionSizes: Array[Long],
+      labelsAndWeights: RDD[(Double, Double)],
+      rowsPerBlock: Int,
+      rowBlocks: Int): RDD[(Array[Double], Array[Double])] = {
     VUtils.zipRDDWithIndex(partitionSizes, labelsAndWeights)
       .map { case (rowIdx: Long, (label: Double, weight: Double)) =>
         val rowBlockIdx = (rowIdx / rowsPerBlock).toInt
@@ -306,7 +307,7 @@ private[spark] object VUtils {
           }
           val numRows = if (coodinate._1 == rowBlocks - 1) lastBlockRowSize else rowsPerBlock
           val numCols = if (coodinate._2 == colBlocks - 1) lastBlockColSize else colsPerBlock
-          (coodinate, VMatrices.COO(numRows, numCols, cooBuff, compressFeatureMatrix))
+          (coodinate, VMatrices.COOEntries(numRows, numCols, cooBuff, compressFeatureMatrix))
         }
     if (rowPartitionSplitNumOnGeneratingFeatureMatrix > 1) {
       rawFeatureBlocks = rawFeatureBlocks.partitionBy(gridPartitioner)
@@ -356,25 +357,40 @@ private[spark] object VUtils {
 
   // TODO: add test
   // Don't modify it before test added.
-  def genFeatureBlocks(rawFeatures: VBlockMatrix, compressFeatureMatrix: Boolean,
-                       featuresStd: DistributedVector): VBlockMatrix = {
+  def genFeatureBlocks(
+      rawFeatures: VBlockMatrix,
+      compressFeatureMatrix: Boolean,
+      featuresStd: DistributedVector): VBlockMatrix = {
     rawFeatures.horizontalZipVector2(featuresStd) {
       (blockCoordinate: (Int, Int), block: VMatrix, partFeaturesStd: Vector) =>
         val partFeatureStdArr = partFeaturesStd.asInstanceOf[DenseVector].values
-        val arrBuf = new ArrayBuffer[(Int, Int, Double)]()
+        var numActive = 0
         block.foreachActive { case (i: Int, j: Int, value: Double) =>
           if (partFeatureStdArr(j) != 0 && value != 0) {
-            arrBuf.append((i, j, value / partFeatureStdArr(j)))
+            numActive += 1
           }
         }
-        VMatrices.COO(block.numRows, block.numCols, arrBuf, compressFeatureMatrix)
+        val rowIndices: Array[Int] = new Array[Int](numActive)
+        val colIndices: Array[Int] = new Array[Int](numActive)
+        val values: Array[Double] = new Array[Double](numActive)
+        var n = 0
+        block.foreachActive { case (i: Int, j: Int, value: Double) =>
+          if (partFeatureStdArr(j) != 0 && value != 0) {
+            rowIndices(n) = i
+            colIndices(n) = j
+            values(n) = value / partFeatureStdArr(j)
+            n += 1
+          }
+        }
+        VMatrices.COOArrays(block.numRows, block.numCols, rowIndices, colIndices,
+          values, compressFeatureMatrix)
     }
   }
 
   // TODO: add test
   // Don't modify it before test added.
-  def sparseVectorToColumnMajorSparseMatrix(numRows: Int, numCols: Int, sv: SparseVector)
-  : SparseMatrix = {
+  def sparseVectorToColumnMajorSparseMatrix(
+      numRows: Int, numCols: Int, sv: SparseVector): SparseMatrix = {
     val numEntries = sv.size
 
     val colPtrs = new Array[Int](numCols + 1)

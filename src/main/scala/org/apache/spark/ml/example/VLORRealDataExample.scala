@@ -20,7 +20,6 @@ package org.apache.spark.ml.example
 import org.apache.spark.ml.classification.{LogisticRegression, VLogisticRegression}
 import org.apache.spark.sql.{Dataset, SparkSession}
 
-
 object VLORRealDataExample {
 
   // https://www.csie.ntu.edu.tw/~cjlin/libsvmtools/datasets/binary.html#a9a

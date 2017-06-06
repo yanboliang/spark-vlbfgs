@@ -35,8 +35,11 @@ object VLORDataGenerator {
     coeffs
   }
 
-  def genRecord(rnd: Random, coeffs: Array[Double],
-                dimension: Int, validFeatureNumPerRecord: Int): String = {
+  def genRecord(
+      rnd: Random,
+      coeffs: Array[Double],
+      dimension: Int,
+      validFeatureNumPerRecord: Int): String = {
 
     val idxBuf = ArrayBuffer[Int](validFeatureNumPerRecord)
     var i = 0
@@ -90,7 +93,8 @@ object VLORDataGenerator {
 
     } catch {
       case _: Throwable =>
-        println("Params: dimension numSplits numRecordsPerSplit validFeatureNumPerRecord seed outputPath")
+        println("Params: dimension numSplits numRecordsPerSplit validFeatureNumPerRecord " +
+          "seed outputPath")
         System.exit(-1)
     }
 

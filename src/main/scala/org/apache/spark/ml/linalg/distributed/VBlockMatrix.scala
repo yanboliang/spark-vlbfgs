@@ -36,8 +36,7 @@ class VBlockMatrix(
     System.getProperty("vflbfgs.mapJoinPartitions.shuffleRdd2", "true").toBoolean
 
   def horizontalZipVector[T: ClassTag](vector: DistributedVector)(
-      f: (((Int, Int), VMatrix, Vector) => T)
-    ): RDD[((Int, Int), T)] = {
+      f: (((Int, Int), VMatrix, Vector) => T)): RDD[((Int, Int), T)] = {
 
     import org.apache.spark.rdd.VRDDFunctions._
 
@@ -57,9 +56,9 @@ class VBlockMatrix(
        vIter: Array[(Int, Iterator[Vector])]) => {
         val vMap = new HashMap[Int, Vector]
         util.Random.shuffle(vIter.toList).foreach { case (colId: Int, iter: Iterator[Vector]) =>
-            val v = iter.next()
-            assert(!iter.hasNext)
-            vMap += (colId -> v)
+          val v = iter.next()
+          assert(!iter.hasNext)
+          vMap += (colId -> v)
         }
         mIter.map { case ((rowBlockIdx: Int, colBlockIdx: Int), sm: VMatrix) =>
           val partVector = vMap(colBlockIdx)
@@ -70,8 +69,7 @@ class VBlockMatrix(
   }
 
   def verticalZipVector[T: ClassTag](vec: DistributedVector)(
-      f: (((Int, Int), VMatrix, Vector) => T)
-    ): RDD[((Int, Int), T)] = {
+      f: (((Int, Int), VMatrix, Vector) => T)): RDD[((Int, Int), T)] = {
 
     import org.apache.spark.rdd.VRDDFunctions._
 
@@ -103,15 +101,13 @@ class VBlockMatrix(
   }
 
   def horizontalZipVector2(vector: DistributedVector)(
-    f: (((Int, Int), VMatrix, Vector) => VMatrix)
-  ): VBlockMatrix = {
+      f: (((Int, Int), VMatrix, Vector) => VMatrix)): VBlockMatrix = {
     val newBlocks = horizontalZipVector(vector)(f)
     new VBlockMatrix(rowsPerBlock, colsPerBlock, newBlocks, gridPartitioner)
   }
 
   def verticalZipVector2(vector: DistributedVector)(
-    f: (((Int, Int), VMatrix, Vector) => VMatrix)
-  ): VBlockMatrix = {
+      f: (((Int, Int), VMatrix, Vector) => VMatrix)): VBlockMatrix = {
     val newBlocks = verticalZipVector(vector)(f)
     new VBlockMatrix(rowsPerBlock, colsPerBlock, newBlocks, gridPartitioner)
   }

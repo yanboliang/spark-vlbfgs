@@ -70,7 +70,8 @@ class VLBFGS(
   protected def determineAndTakeStepSize(
       state: State,
       fn: VDiffFunction,
-      direction: DistributedVector): (Double, Double, DistributedVector, DistributedVector, DistributedVector) = {
+      direction: DistributedVector
+    ): (Double, Double, DistributedVector, DistributedVector, DistributedVector) = {
     // using strong wolfe line search
     val grad = state.grad
 
@@ -140,7 +141,8 @@ class VLBFGS(
     }
   }
 
-  protected def initialState(fn: VDiffFunction, init: DistributedVector, checkpointInterval: Int): State = {
+  protected def initialState(
+      fn: VDiffFunction, init: DistributedVector, checkpointInterval: Int): State = {
     val x = init
     val (value, grad) = fn.calculate(x, null)
     val (adjValue, adjGrad) = adjust(null, x, grad, value)
@@ -587,5 +589,5 @@ abstract class VDiffFunction(eagerPersist: Boolean = true) { outer =>
 
   // Calculates both the value and the gradient at a point
   def calculate(x: DistributedVector, checkAndMarkCheckpoint: DistributedVector => Unit):
-  (Double, DistributedVector)
+    (Double, DistributedVector)
 }

@@ -289,7 +289,8 @@ class VOWLQN (
   override protected def determineAndTakeStepSize(
       state: State,
       fn: VDiffFunction,
-      direction: DistributedVector): (Double, Double, DistributedVector, DistributedVector, DistributedVector) = {
+      direction: DistributedVector
+    ): (Double, Double, DistributedVector, DistributedVector, DistributedVector) = {
 
     val lineSearchDiffFn = new VOWLQNLineSearchDiffFun(state, direction, fn, eagerPersist)
 

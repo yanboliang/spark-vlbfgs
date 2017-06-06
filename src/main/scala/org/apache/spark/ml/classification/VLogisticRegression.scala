@@ -17,16 +17,14 @@
 
 package org.apache.spark.ml.classification
 
-import scala.collection.mutable.ArrayBuffer
 import org.apache.spark.internal.Logging
 import org.apache.spark.ml.feature.Instance
 import org.apache.spark.ml.linalg._
 import org.apache.spark.ml.linalg.distributed._
 import org.apache.spark.ml.optim.{VDiffFunction, VLBFGS, VOWLQN}
-import org.apache.spark.ml.param.{BooleanParam, IntParam, ParamMap, ParamValidators}
+import org.apache.spark.ml.param.ParamMap
 import org.apache.spark.ml.param.shared._
 import org.apache.spark.ml.util._
-import org.apache.spark.mllib.stat.OptimMultivariateOnlineSummarizer
 import org.apache.spark.SparkException
 import org.apache.spark.ml.VParams
 import org.apache.spark.mllib.util.MLUtils

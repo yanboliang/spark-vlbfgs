@@ -32,11 +32,11 @@ class VMatrixSuite extends SparkFunSuite {
     for (compressed <- List(false, true)) {
       val emptyRow = Vectors.sparse(4, new Array[(Int, Double)](0))
 
-      assert(VMatrices.COO(3, 4, new Array[(Int, Int, Double)](0), compressed).rowIter.toArray ===
+      assert(VMatrices.COOEntries(3, 4, new Array[(Int, Int, Double)](0), compressed).rowIter.toArray ===
         Array(emptyRow, emptyRow, emptyRow)
       )
 
-      assert(VMatrices.COO(3, 4, Array((2, 2, 4.0), (2, 3, 5.0), (0, 1, 2.0), (0, 3, 3.0)), compressed)
+      assert(VMatrices.COOEntries(3, 4, Array((2, 2, 4.0), (2, 3, 5.0), (0, 1, 2.0), (0, 3, 3.0)), compressed)
         .rowIter.toArray ===
         Array(
           Vectors.sparse(4, Array((1, 2.0), (3, 3.0))),
@@ -44,7 +44,7 @@ class VMatrixSuite extends SparkFunSuite {
           Vectors.sparse(4, Array((2, 4.0), (3, 5.0)))
         ))
 
-      assert(VMatrices.COO(6, 4, Array((1, 1, 2.0), (1, 3, 3.0), (4, 1, 7.0)), compressed)
+      assert(VMatrices.COOEntries(6, 4, Array((1, 1, 2.0), (1, 3, 3.0), (4, 1, 7.0)), compressed)
         .rowIter.toArray ===
         Array(
           emptyRow,
@@ -56,7 +56,7 @@ class VMatrixSuite extends SparkFunSuite {
         )
       )
     }
-    assert(VMatrices.COO(8401234, 7105678, Array((70000, 7000000, 2.0),
+    assert(VMatrices.COOEntries(8401234, 7105678, Array((70000, 7000000, 2.0),
       (8400000, 6999999, 7.0), (8400000, 125, 3.0), (255, 2, 4.0), (254, 65050, 5.0)), true)
       .rowIter.zipWithIndex.filter(_._1.numActives > 0).toArray ===
       Array(
@@ -71,7 +71,7 @@ class VMatrixSuite extends SparkFunSuite {
   test ("fromCOO && apply && foreach") {
 
     for (compressed <- List(false, true)) {
-      val mat = VMatrices.COO(8401234, 7105678, Array((70000, 7000000, 2.0),
+      val mat = VMatrices.COOEntries(8401234, 7105678, Array((70000, 7000000, 2.0),
         (8400000, 6999999, 7.0), (8400000, 125, 3.0), (255, 2, 4.0), (254, 65050, 5.0)), true)
       assert(mat(255, 666666) == 0.0 && mat(70000, 7000000) == 2.0 && mat(8400000, 125) == 3.0
         && mat(255, 2) == 4.0 && mat(254, 65050) == 5.0)
