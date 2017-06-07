@@ -33,7 +33,7 @@ class VOrderedRDDFunctions[K, V](self: RDD[(K, V)])
         new Iterator[(K, CompactBuffer[V])] {
           private var firstElemInNextGroup: (K, V) = null
 
-          override def hasNext: Boolean = (firstElemInNextGroup != null || iter.hasNext)
+          override def hasNext: Boolean = firstElemInNextGroup != null || iter.hasNext
 
           override def next(): (K, CompactBuffer[V]) = {
             if (firstElemInNextGroup == null) {

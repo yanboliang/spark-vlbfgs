@@ -17,8 +17,6 @@
 
 package org.apache.spark.ml.linalg
 
-import java.util.Arrays
-
 /**
  * Row major COO format matrix.
  * It will use less storage space than `ml.linalg.SparseMatrix`,
@@ -54,42 +52,49 @@ trait VMatrix extends Serializable {
 
 object VMatrices {
 
-  def COO(numRows: Int, numCols: Int, entries: Iterable[(Int, Int, Double)],
-          compressed: Boolean = false): VMatrix = {
+  /**
+   * Create COO format matrix from (rowIdx, colIdx, value) entries.
+   */
+  def COOEntries(
+      numRows: Int,
+      numCols: Int,
+      entries: Iterable[(Int, Int, Double)],
+      compressed: Boolean = false): VMatrix = {
     val sortedEntries = entries.toSeq.sortBy(v => (v._1, v._2)) // sort by row major order.
+    val rowIndices = new Array[Int](sortedEntries.length)
+    val colIndices = new Array[Int](sortedEntries.length)
+    val values = new Array[Double](sortedEntries.length)
 
+    var ptr = 0
+    sortedEntries.foreach { case (rowIndex: Int, colIndex: Int, value: Double) =>
+      rowIndices(ptr) = rowIndex
+      colIndices(ptr) = colIndex
+      values(ptr) = value
+      ptr += 1
+    }
+
+    COOArrays(numRows, numCols, rowIndices, colIndices, values, compressed)
+  }
+
+  /**
+   * Create COO format matrix from three arrays: row indices, column indices and values.
+   */
+  def COOArrays(
+      numRows: Int,
+      numCols: Int,
+      rowIndices: Array[Int],
+      colIndices: Array[Int],
+      values: Array[Double],
+      compressed: Boolean = false): VMatrix = {
     if (!compressed) {
-      val rowIndices = new Array[Int](sortedEntries.length)
-      val colIndices = new Array[Int](sortedEntries.length)
-      val values = new Array[Double](sortedEntries.length)
-
-      var ptr = 0
-      sortedEntries.foreach { case (rowIndex: Int, colIndex: Int, value: Double) =>
-        rowIndices(ptr) = rowIndex
-        colIndices(ptr) = colIndex
-        values(ptr) = value
-        ptr += 1
-      }
-
       new VCOOMatrix(numRows, numCols, rowIndices, colIndices, values)
     } else {
-      val rowIndices = new Array[Int](sortedEntries.length)
-      val colIndices = new Array[Int](sortedEntries.length)
-      val values = new Array[Float](sortedEntries.length)
-
-      var ptr = 0
-      sortedEntries.foreach { case (rowIndex: Int, colIndex: Int, value: Double) =>
-        rowIndices(ptr) = rowIndex
-        colIndices(ptr) = colIndex
-        values(ptr) = value.toFloat
-        ptr += 1
-      }
-
-      def intTo24Bit = (v: Int) => Array((v & 255).toByte, ((v >> 8) & 255).toByte, ((v >> 16) & 255).toByte)
+      def intTo24Bit = (v: Int) =>
+        Array((v & 255).toByte, ((v >> 8) & 255).toByte, ((v >> 16) & 255).toByte)
 
       new VCompressedCOOMatrix(numRows, numCols,
         rowIndices.flatMap(x => intTo24Bit(x)),
-        colIndices.flatMap(x => intTo24Bit(x)), values)
+        colIndices.flatMap(x => intTo24Bit(x)), values.map(_.toFloat))
     }
   }
 

@@ -39,7 +39,7 @@ class VBlockMatrixSuite extends SparkFunSuite with MLlibTestSparkContext {
       val rowBlockIdx = idx % rowBlocks
       val colBlockIdx = idx / rowBlocks
       ((rowBlockIdx, colBlockIdx),
-        VMatrices.COO(1, 2, Array((0, 0, rowBlockIdx.toDouble),
+        VMatrices.COOEntries(1, 2, Array((0, 0, rowBlockIdx.toDouble),
           (0, 1, colBlockIdx.toDouble))))
     }
     val gridPartitioner = VGridPartitioner(rowBlocks, colBlocks, rowBlocksPerPart, colBlocksPerPart)
@@ -77,7 +77,7 @@ class VBlockMatrixSuite extends SparkFunSuite with MLlibTestSparkContext {
       val rowBlockIdx = idx % rowBlocks
       val colBlockIdx = idx / rowBlocks
       ((rowBlockIdx, colBlockIdx),
-        VMatrices.COO(1, 2, Array((0, 0, rowBlockIdx.toDouble),
+        VMatrices.COOEntries(1, 2, Array((0, 0, rowBlockIdx.toDouble),
           (0, 1, colBlockIdx.toDouble))))
     }
     val gridPartitioner = VGridPartitioner(rowBlocks, colBlocks, rowBlocksPerPart, colBlocksPerPart)

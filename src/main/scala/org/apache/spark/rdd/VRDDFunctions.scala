@@ -117,7 +117,8 @@ class VPairRDDFunctions[K, V](self: RDD[(K, V)])
           createZero()
         }
         hashMap.update(key, seqOp(combinedValue, value))
-        System.err.println(s"thread: ${Thread.currentThread().getId} idx: ${iterIndex}, estimate aggr map: ${SizeEstimator.estimate(hashMap)}")
+        System.err.println(s"thread: ${Thread.currentThread().getId} idx: $iterIndex, " +
+          s"estimate aggr map: ${SizeEstimator.estimate(hashMap)}")
         iterIndex += 1
       }
       val res = hashMap.toIterator

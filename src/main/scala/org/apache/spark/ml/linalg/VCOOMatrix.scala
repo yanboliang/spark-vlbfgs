@@ -17,8 +17,6 @@
 
 package org.apache.spark.ml.linalg
 
-import java.util.Arrays
-
 /**
  * Row major COO format matrix.
  * It will use less storage space than `ml.linalg.SparseMatrix`,

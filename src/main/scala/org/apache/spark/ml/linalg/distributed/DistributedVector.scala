@@ -49,13 +49,13 @@ class DistributedVector(
       && size == other.size)
 
     val resValues = values.zip(other.values).map { case (vec1: Vector, vec2: Vector) =>
-        val vec3 = if (vec1.isInstanceOf[DenseVector]) {
-          vec1.copy
-        } else {
-          vec1.toDense
-        }
-        BLAS.axpy(a, vec2, vec3)
-        vec3
+      val vec3 = if (vec1.isInstanceOf[DenseVector]) {
+        vec1.copy
+      } else {
+        vec1.toDense
+      }
+      BLAS.axpy(a, vec2, vec3)
+      vec3
     }
     new DistributedVector(resValues, sizePerPart, numPartitions, size)
   }
@@ -111,7 +111,7 @@ class DistributedVector(
 
   def toKVRDD: RDD[(Int, Vector)] = {
     values.mapPartitionsWithIndex { case (pid: Int, iter: Iterator[Vector]) =>
-        iter.map(v => (pid, v))
+      iter.map(v => (pid, v))
     }
   }
 
@@ -333,7 +333,8 @@ object DistributedVectors {
     val sizePerPart = firstDV.sizePerPart
     val size = firstDV.size
 
-    val combinedValues = rddList.head.context.union(rddList).aggregateByKey(
+    val combinedValues = rddList.head.context.union(rddList)
+      .aggregateByKey(
       new ScaledVectorAggregator,
       new DistributedVectorPartitioner(numPartitions)
     )((sva: ScaledVectorAggregator, instance: (Double, Vector)) => sva.add(instance),
