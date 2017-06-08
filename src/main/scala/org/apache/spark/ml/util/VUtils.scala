@@ -253,6 +253,11 @@ private[spark] object VUtils {
     val lastBlockColSize = (numFeatures - (colBlocks - 1) * colsPerBlock).toInt
     val lastBlockRowSize = (numInstances - (rowBlocks - 1) * rowsPerBlock).toInt
 
+    // Here we first count the exact number of active features in each block. Then
+    // in the following step, we can ask for determinate size of row indices array,
+    // column indices array and value array. This can help to reduce some heap memory
+    // issues, like GC and OOM. The idea is trading time for space in at an acceptable
+    // level.
     val activeInBlock = VUtils.zipRDDWithIndex(partitionSizes, instances)
       .mapPartitions { iter: Iterator[(Long, Instance)] =>
         new Iterator[Array[((Int, Int), Int)]] {
@@ -290,21 +295,35 @@ private[spark] object VUtils {
 
     var rawFeatureBlocks: RDD[((Int, Int), VMatrix)] =
       VUtils.zipRDDWithIndex(partitionSizes, instances).zipPartitions(activeInBlock) { (it1, it2) =>
+        // Zip the raw instance rdd and activeInBlock rdd. We place the active feature information
+        // in front of instance data, and mark boundary with (-1, null) tuple.
+        //
+        //  [ active feature information in each block  ---> boundary ---> instances data ]
+        //  [ ((1, 3), 10),  ((1, 4), 8)  ... ((3, 9), 17),   boundary, instance, ... instance] partition 0
+        //  [ ((5, 6), 3),   ((5, 7), 12) ... ((7, 12), 9),   boundary, instance, ... instance] partition 1
+        //  [ ((9, 3), 1),   ((9, 4), 18) ... ((11, 9), 7),   boundary, instance, ... instance] partition 2
+        //                                    ...
+        //  [ ((11, 7), 2),  ((11, 8), 5) ... ((11, 13), 14), boundary, instance, ... instance] partition N
         new Iterator[(Int, Any)] {
-          var shouldSKip = false
+          var shouldSkip = false
           override def hasNext: Boolean = it2.hasNext || it1.hasNext
 
           override def next(): (Int, Any) = {
+            // mark data item with different types:
+            // 1: active feature information in each block
+            // -1: boundary
+            // 2: raw instance data
             if (it2.hasNext) {
               (1, it2.next())
-            } else if (!shouldSKip) {
-              shouldSKip = true
+            } else if (!shouldSkip) {
+              shouldSkip = true
               (-1, null)
             } else {
               (2, it1.next())
             }
           }
         }}.mapPartitions { iter: Iterator[(Int, Any)] =>
+          // Pre-fetch the front active feature information in each partition
           val activeInBlock = new ArrayBuffer[Array[((Int, Int), Int)]]
           var shouldBreak = false
           while (iter.hasNext && !shouldBreak) {
@@ -332,7 +351,9 @@ private[spark] object VUtils {
                 idx(i) = 0
               }
               val buffArr = Array.tabulate(colBlocks) { i =>
-                Tuple3(new Array[Int](activeInBlock.apply(n)(i)._2),
+                // Give each array with a determinate size
+                Tuple3(
+                  new Array[Int](activeInBlock.apply(n)(i)._2),
                   new Array[Int](activeInBlock.apply(n)(i)._2),
                   new Array[Double](activeInBlock.apply(n)(i)._2))
               }
