@@ -279,9 +279,8 @@ private[spark] object VUtils {
                 val blockColIndex = colIndex / colsPerBlock
                 buffArr(blockColIndex) += 1
               }
-              if (inBlockRowIndex == rowsPerBlock - 1 ||
-                inBlockRowIndex % generatingFeatureMatrixBuffer ==
-                  generatingFeatureMatrixBuffer - 1
+              if (inBlockRowIndex == rowsPerBlock - 1
+                || inBlockRowIndex % generatingFeatureMatrixBuffer == generatingFeatureMatrixBuffer - 1
               ) {
                 shouldBreak = true
               }
@@ -351,7 +350,7 @@ private[spark] object VUtils {
                 idx(i) = 0
               }
               val buffArr = Array.tabulate(colBlocks) { i =>
-                // Give each array with a determinate size
+                // Create each array with a determinate size.
                 Tuple3(
                   new Array[Int](activeInBlock.apply(n)(i)._2),
                   new Array[Int](activeInBlock.apply(n)(i)._2),
@@ -377,9 +376,8 @@ private[spark] object VUtils {
                   COOBuffTuple._3(m) = value
                   idx(blockColIndex) += 1
                 }
-                if (inBlockRowIndex == rowsPerBlock - 1 ||
-                  inBlockRowIndex % generatingFeatureMatrixBuffer ==
-                    generatingFeatureMatrixBuffer - 1
+                if (inBlockRowIndex == rowsPerBlock - 1
+                  || inBlockRowIndex % generatingFeatureMatrixBuffer == generatingFeatureMatrixBuffer - 1
                 ) {
                   shouldBreak = true
                 }
