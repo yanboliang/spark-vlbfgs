@@ -253,48 +253,143 @@ private[spark] object VUtils {
     val lastBlockColSize = (numFeatures - (colBlocks - 1) * colsPerBlock).toInt
     val lastBlockRowSize = (numInstances - (rowBlocks - 1) * rowsPerBlock).toInt
 
+    // Here we first count the exact number of active features in each block. Then
+    // in the following step, we can ask for determinate size of row indices array,
+    // column indices array and value array. This can help to reduce some heap memory
+    // issues, like GC and OOM. The idea is trading time for space in at an acceptable
+    // level.
+    val activeInBlock = VUtils.zipRDDWithIndex(partitionSizes, instances)
+      .mapPartitions { iter: Iterator[(Long, Instance)] =>
+        new Iterator[Array[((Int, Int), Int)]] {
+
+          override def hasNext: Boolean = iter.hasNext
+
+          override def next(): Array[((Int, Int), Int)] = {
+            val buffArr = Array.fill(colBlocks)(0)
+
+            var shouldBreak = false
+            var blockRowIndex = -1
+            while (iter.hasNext && !shouldBreak) {
+              val (rowIndex: Long, instance: Instance) = iter.next()
+              if (blockRowIndex == -1) {
+                blockRowIndex = (rowIndex / rowsPerBlock).toInt
+              }
+              val inBlockRowIndex = (rowIndex % rowsPerBlock).toInt
+              instance.features.foreachActive { (colIndex: Int, value: Double) =>
+                val blockColIndex = colIndex / colsPerBlock
+                buffArr(blockColIndex) += 1
+              }
+              if (inBlockRowIndex == rowsPerBlock - 1
+                || inBlockRowIndex % generatingFeatureMatrixBuffer == generatingFeatureMatrixBuffer - 1
+              ) {
+                shouldBreak = true
+              }
+            }
+            buffArr.zipWithIndex.map { case (numActive: Int, blockColIndex: Int) =>
+              ((blockRowIndex, blockColIndex), numActive)
+            }
+          }
+        }
+      }
+
     var rawFeatureBlocks: RDD[((Int, Int), VMatrix)] =
-      VUtils.zipRDDWithIndex(partitionSizes, instances)
-        .mapPartitions { iter: Iterator[(Long, Instance)] =>
+      VUtils.zipRDDWithIndex(partitionSizes, instances).zipPartitions(activeInBlock) { (it1, it2) =>
+        // Zip the raw instance rdd and activeInBlock rdd. We place the active feature information
+        // in front of instance data, and mark boundary with (-1, null) tuple.
+        //
+        //  [ active feature information in each block  ---> boundary ---> instances data ]
+        //  [ ((1, 3), 10),  ((1, 4), 8)  ... ((3, 9), 17),   boundary, instance, ... instance] partition 0
+        //  [ ((5, 6), 3),   ((5, 7), 12) ... ((7, 12), 9),   boundary, instance, ... instance] partition 1
+        //  [ ((9, 3), 1),   ((9, 4), 18) ... ((11, 9), 7),   boundary, instance, ... instance] partition 2
+        //                                    ...
+        //  [ ((11, 7), 2),  ((11, 8), 5) ... ((11, 13), 14), boundary, instance, ... instance] partition N
+        new Iterator[(Int, Any)] {
+          var shouldSkip = false
+          override def hasNext: Boolean = it2.hasNext || it1.hasNext
+
+          override def next(): (Int, Any) = {
+            // mark data item with different types:
+            // 1: active feature information in each block
+            // -1: boundary
+            // 2: raw instance data
+            if (it2.hasNext) {
+              (1, it2.next())
+            } else if (!shouldSkip) {
+              shouldSkip = true
+              (-1, null)
+            } else {
+              (2, it1.next())
+            }
+          }
+        }}.mapPartitions { iter: Iterator[(Int, Any)] =>
+          // Pre-fetch the front active feature information in each partition
+          val activeInBlock = new ArrayBuffer[Array[((Int, Int), Int)]]
+          var shouldBreak = false
+          while (iter.hasNext && !shouldBreak) {
+            val a = iter.next()
+            if (a._1 == 1) {
+              activeInBlock += a._2.asInstanceOf[Array[((Int, Int), Int)]]
+            } else if (a._1 == -1) {
+              shouldBreak = true
+            }
+          }
+
           new Iterator[Array[((Int, Int), (Array[Int], Array[Int], Array[Double]))]] {
 
             override def hasNext: Boolean = iter.hasNext
 
-            override def next(): Array[((Int, Int), (Array[Int], Array[Int], Array[Double]))] = {
-              val buffArr = Array.fill(colBlocks)(
-                Tuple3(new ArrayBuffer[Int], new ArrayBuffer[Int], new ArrayBuffer[Double]))
+            val idx = Array.fill(colBlocks)(0)
+            var inBlockRowIndex = 0
+            var blockColIndex = 0
+            var inBlockColIndex = 0
+            var n = 0
+            var m = 0
 
-              var shouldBreak = false
+            override def next(): Array[((Int, Int), (Array[Int], Array[Int], Array[Double]))] = {
+              for(i <- 0 until colBlocks) {
+                idx(i) = 0
+              }
+              val buffArr = Array.tabulate(colBlocks) { i =>
+                // Create each array with a determinate size.
+                Tuple3(
+                  new Array[Int](activeInBlock.apply(n)(i)._2),
+                  new Array[Int](activeInBlock.apply(n)(i)._2),
+                  new Array[Double](activeInBlock.apply(n)(i)._2))
+              }
+              n += 1
+
+              shouldBreak = false
               var blockRowIndex = -1
               while (iter.hasNext && !shouldBreak) {
-                val (rowIndex: Long, instance: Instance) = iter.next()
+                val (rowIndex: Long, instance: Instance) = iter.next()._2.asInstanceOf[(Long, Instance)]
                 if (blockRowIndex == -1) {
                   blockRowIndex = (rowIndex / rowsPerBlock).toInt
                 }
-                val inBlockRowIndex = (rowIndex % rowsPerBlock).toInt
+                inBlockRowIndex = (rowIndex % rowsPerBlock).toInt
                 instance.features.foreachActive { (colIndex: Int, value: Double) =>
-                  val blockColIndex = colIndex / colsPerBlock
-                  val inBlockColIndex = colIndex % colsPerBlock
+                  blockColIndex = colIndex / colsPerBlock
+                  inBlockColIndex = colIndex % colsPerBlock
+                  m = idx(blockColIndex)
                   val COOBuffTuple = buffArr(blockColIndex)
-                  COOBuffTuple._1 += inBlockRowIndex
-                  COOBuffTuple._2 += inBlockColIndex
-                  COOBuffTuple._3 += value
+                  COOBuffTuple._1(m) = inBlockRowIndex
+                  COOBuffTuple._2(m) = inBlockColIndex
+                  COOBuffTuple._3(m) = value
+                  idx(blockColIndex) += 1
                 }
-                if (inBlockRowIndex == rowsPerBlock - 1 ||
-                  inBlockRowIndex % generatingFeatureMatrixBuffer ==
-                    generatingFeatureMatrixBuffer - 1
+                if (inBlockRowIndex == rowsPerBlock - 1
+                  || inBlockRowIndex % generatingFeatureMatrixBuffer == generatingFeatureMatrixBuffer - 1
                 ) {
                   shouldBreak = true
                 }
               }
-              buffArr.zipWithIndex.map { case (tuple: (ArrayBuffer[Int], ArrayBuffer[Int],
-                ArrayBuffer[Double]), blockColIndex: Int) =>
-                ((blockRowIndex, blockColIndex),
-                  (tuple._1.toArray, tuple._2.toArray, tuple._3.toArray))
+              var _blockColIndex = -1
+              buffArr.map { case (tuple: (Array[Int], Array[Int],
+                Array[Double])) =>
+                _blockColIndex += 1
+                ((blockRowIndex, _blockColIndex), (tuple._1, tuple._2, tuple._3))
               }
             }
-          }.flatMap(_.toIterator)
-        }
+          }.flatMap(_.toIterator)}
         .groupByKey(rowSplitedGridPartitioner)
         .map { case (coodinate: (Int, Int), cooList: Iterable[(Array[Int], Array[Int], Array[Double])]) =>
           val cooBuff = new ArrayBuffer[(Int, Int, Double)]
